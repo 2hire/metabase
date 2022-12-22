@@ -30,8 +30,6 @@ jobs:
     env:
       MB_EDITION: ${{ matrix.edition }}
       INTERACTIVE: false
-      AWS_REGION: "eu-central-1"
-      AWS_DOCKER_REPO: "dataanalyticsstack-metabaseservicerepository0ccf373d-ub9otebpphy8"
     steps:
     - name: Check out the code
       uses: actions/checkout@v3
@@ -79,6 +77,9 @@ jobs:
     strategy:
       matrix:
         edition: [oss]
+    env:
+      AWS_REGION: "eu-central-1"
+      AWS_DOCKER_REPO: "dataanalyticsstack-metabaseservicerepository0ccf373d-ub9otebpphy8"
     services:
       registry:
         image: registry:2
