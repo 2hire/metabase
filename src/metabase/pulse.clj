@@ -237,6 +237,11 @@
   [results]
   (every? is-card-empty? results))
 
+(defn- filter-empty-cards
+  "Remove cards that have no results"
+  [results]
+  (filter (complement is-card-empty?) results))
+
 (defn- goal-met? [{:keys [alert_above_goal], :as pulse} [first-result]]
   (let [goal-comparison      (if alert_above_goal >= <)
         goal-val             (ui-logic/find-goal-value first-result)
@@ -355,10 +360,14 @@
     (when (should-send-notification? pulse results)
       (when (:alert_first_only pulse)
         (db/delete! Pulse :id pulse-id))
-      ;; `channel-ids` is the set of channels to send to now, so only send to those. Note the whole set of channels
-      (for [channel channels
-            :when   (contains? (set channel-ids) (:id channel))]
-        (notification pulse results channel)))))
+      ;; Check if the pulse is set to skip if empty and so filter out the empty cards using the filter-empty-cards function
+      (let [filtered-results (if (:skip_if_empty pulse)
+                      (filter-empty-cards results)
+                      results)]
+        ;; `channel-ids` is the set of channels to send to now, so only send to those. Note the whole set of channels
+        (for [channel channels
+              :when   (contains? (set channel-ids) (:id channel))]
+          (notification pulse filtered-results channel))))))
 
 (defn- pulse->notifications
   "Execute the underlying queries for a sequence of Pulses and return the results as 'notification' maps."
