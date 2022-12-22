@@ -120,6 +120,6 @@ jobs:
         context: bin/docker/.
         platforms: linux/amd64
         network: host
-        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_DOCKER_REPO }}:${{ github.run_number }}-${{ github.repository }}-${{ github.sha }},${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_DOCKER_REPO }}:latest
+        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_DOCKER_REPO }}:${{ github.run_number }}-2hire-metabase-${{ github.sha }},${{ steps.login-ecr.outputs.registry }}/${{ env.AWS_DOCKER_REPO }}:latest
         no-cache: true
         push: true
