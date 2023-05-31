@@ -481,7 +481,7 @@
       ;; `channel-ids` is the set of channels to send to now, so only send to those. Note the whole set of channels
       (for [channel channels
             :when   (contains? (set channel-ids) (:id channel))]
-        (notification pulse filtered-results channel)))))
+        (notification pulse filtered-results channel))))))
 
 (defn- pulse->notifications
   "Execute the underlying queries for a sequence of Pulses and return the parts as 'notification' maps."
