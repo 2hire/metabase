@@ -1,105 +1,107 @@
 import React from "react";
-import { renderWithProviders, screen } from "__support__/ui";
+import { Route } from "react-router";
+import fetchMock from "fetch-mock";
+import userEvent from "@testing-library/user-event";
+
+import { getMetadata } from "metabase/selectors/metadata";
+
 import {
-  SAMPLE_DATABASE,
-  ORDERS,
-  metadata,
-} from "__support__/sample_database_fixture";
+  renderWithProviders,
+  screen,
+  waitForElementToBeRemoved,
+} from "__support__/ui";
 import { setupEnterpriseTest } from "__support__/enterprise";
-import MetabaseSettings from "metabase/lib/settings";
-import Question from "metabase-lib/Question";
+import { mockSettings } from "__support__/settings";
+import { createMockEntitiesState } from "__support__/store";
+
+import {
+  createMockCard,
+  createMockModerationReview,
+  createMockUser,
+} from "metabase-types/api/mocks";
+import { createSampleDatabase } from "metabase-types/api/mocks/presets";
+import { createMockState } from "metabase-types/store/mocks";
+
 import { QuestionInfoSidebar } from "./QuestionInfoSidebar";
 
-const BASE_QUESTION = {
-  id: 1,
-  name: "Q1",
-  description: null,
-  collection_id: null,
-  can_write: true,
-  dataset: false,
-  display: "table",
-  visualization_settings: {},
-  dataset_query: {
-    type: "query",
-    database: SAMPLE_DATABASE.id,
-    query: {
-      "source-table": ORDERS.id,
-    },
-  },
-  moderation_reviews: [
-    {
-      status: "verified",
-      moderator_id: 1,
-      created_at: Date.now(),
-      most_recent: true,
-    },
-  ],
-};
+const VERIFIED_REVIEW = createMockModerationReview({ status: "verified" });
 
-function mockCachingSettings({ enabled = true } = {}) {
-  const original = MetabaseSettings.get.bind(MetabaseSettings);
-  const spy = jest.spyOn(MetabaseSettings, "get");
-  spy.mockImplementation(key => {
-    const settings = {
-      "enable-query-caching": enabled,
-      "query-caching-min-ttl": 10000,
-      "application-name": "Metabase Test",
-      version: { tag: "" },
-      "is-hosted?": false,
-      "enable-enhancements?": false,
-    };
-    return settings[key] ?? original(key);
+function getQuestionCard(params) {
+  return createMockCard({
+    moderation_reviews: [VERIFIED_REVIEW],
+    ...params,
   });
 }
 
-function getQuestion(card) {
-  return new Question(
-    {
-      ...BASE_QUESTION,
-      ...card,
-    },
-    metadata,
-  );
-}
-
-function getDataset(card) {
-  return new Question(
-    {
-      ...BASE_QUESTION,
-      ...card,
-      dataset: true,
-    },
-    metadata,
-  );
-}
-
-function setup({ question, cachingEnabled = true } = {}) {
-  mockCachingSettings({
-    enabled: cachingEnabled,
+function getModelCard(params) {
+  return createMockCard({
+    moderation_reviews: [VERIFIED_REVIEW],
+    ...params,
+    dataset: true,
   });
+}
 
+async function setup({ card, cachingEnabled = true } = {}) {
   const onSave = jest.fn();
 
-  return renderWithProviders(
-    <QuestionInfoSidebar question={question} onSave={onSave} />,
+  const db = createSampleDatabase();
+  const user = createMockUser();
+
+  const settings = mockSettings({
+    "enable-query-caching": cachingEnabled,
+    "query-caching-min-ttl": 10000,
+  });
+
+  const storeInitialState = createMockState({
+    settings,
+    currentUser: user,
+    entities: createMockEntitiesState({
+      databases: [db],
+      questions: [card],
+    }),
+  });
+
+  const metadata = getMetadata(storeInitialState);
+  const question = metadata.question(card.id);
+
+  fetchMock
+    .get(`path:/api/card/${card.id}`, card)
+    .get(
+      { url: `path:/api/revision`, query: { entity: "card", id: card.id } },
+      [],
+    )
+    .get("path:/api/user", [user])
+    .get(`path:/api/user/${user.id}`, user);
+
+  function WrappedQuestionInfoSidebar() {
+    return <QuestionInfoSidebar question={question} onSave={onSave} />;
+  }
+
+  renderWithProviders(
+    <Route path="*" component={WrappedQuestionInfoSidebar} />,
     {
-      withSampleDatabase: true,
+      withRouter: true,
+      storeInitialState,
     },
   );
+
+  await waitForElementToBeRemoved(() => screen.queryByText(/Loading/i));
+
+  return { question };
 }
 
-describe("QuestionDetailsSidebarPanel", () => {
+describe("QuestionInfoSidebar", () => {
   describe("common features", () => {
     [
-      { type: "Saved Question", getObject: getQuestion },
-      { type: "Dataset", getObject: getDataset },
+      { type: "Saved Question", getObject: getQuestionCard },
+      { type: "Model", getObject: getModelCard },
     ].forEach(testCase => {
       const { type, getObject } = testCase;
 
       describe(type, () => {
-        it("displays description", () => {
-          setup({ question: getObject({ description: "Foo bar" }) });
-          expect(screen.queryByText("Foo bar")).toBeInTheDocument();
+        it("displays description", async () => {
+          await setup({ card: getObject({ description: "Foo bar" }) });
+          expect(screen.getByText("Foo bar")).toBeInTheDocument();
         });
       });
     });
@@ -107,8 +109,8 @@ describe("QuestionDetailsSidebarPanel", () => {
 
   describe("cache ttl field", () => {
     describe("oss", () => {
-      it("is not shown", () => {
-        setup({ question: getQuestion() });
+      it("is not shown", async () => {
+        await setup({ card: getQuestionCard() });
         expect(
           screen.queryByText("Cache Configuration"),
         ).not.toBeInTheDocument();
@@ -120,13 +122,13 @@ describe("QuestionDetailsSidebarPanel", () => {
         setupEnterpriseTest();
       });
 
-      it("is shown if caching is enabled", () => {
-        setup({ question: getQuestion({ cache_ttl: 2 }) });
-        expect(screen.queryByText("Cache Configuration")).toBeInTheDocument();
+      it("is shown if caching is enabled", async () => {
+        await setup({ card: getQuestionCard({ cache_ttl: 2 }) });
+        expect(screen.getByText("Cache Configuration")).toBeInTheDocument();
       });
 
-      it("is hidden if caching is disabled", () => {
-        setup({ question: getQuestion(), cachingEnabled: false });
+      it("is hidden if caching is disabled", async () => {
+        await setup({ card: getQuestionCard(), cachingEnabled: false });
         expect(
           screen.queryByText("Cache Configuration"),
         ).not.toBeInTheDocument();
@@ -139,35 +141,52 @@ describe("QuestionDetailsSidebarPanel", () => {
       setupEnterpriseTest();
     });
 
-    it("should not show verification badge if unverified", () => {
-      setup({ question: getQuestion({ moderation_reviews: [] }) });
+    it("should not show verification badge if unverified", async () => {
+      await setup({ card: getQuestionCard({ moderation_reviews: [] }) });
       expect(screen.queryByText(/verified this/)).not.toBeInTheDocument();
     });
 
-    it("should show verification badge if verified", () => {
-      setup({ question: getQuestion() });
-      expect(screen.queryByText(/verified this/)).toBeInTheDocument();
+    it("should show verification badge if verified", async () => {
+      await setup({ card: getQuestionCard() });
+      expect(screen.getByText(/verified this/)).toBeInTheDocument();
+    });
+  });
+
+  describe("model detail link", () => {
+    it("is shown for models", async () => {
+      const { question: model } = await setup({ card: getModelCard() });
+
+      const link = screen.getByText("Model details");
+
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveAttribute("href", `${model.getUrl()}/detail`);
+    });
+
+    it("isn't shown for questions", async () => {
+      await setup({ card: getQuestionCard() });
+      expect(screen.queryByText("Model details")).not.toBeInTheDocument();
     });
   });
 
   describe("read-only permissions", () => {
-    it("should disable input field for description", () => {
-      setup({
-        question: getQuestion({ description: "Foo bar", can_write: false }),
+    it("should disable input field for description", async () => {
+      await setup({
+        card: getQuestionCard({ description: "Foo bar", can_write: false }),
       });
+      // show input
+      userEvent.click(screen.getByTestId("editable-text"));
+
       expect(screen.queryByPlaceholderText("Add description")).toHaveValue(
         "Foo bar",
       );
       expect(screen.queryByPlaceholderText("Add description")).toBeDisabled();
     });
 
-    it("should display 'No description' if description is null and user does not have write permissions", () => {
-      setup({
-        question: getQuestion({ description: null, can_write: false }),
+    it("should display 'No description' if description is null and user does not have write permissions", async () => {
+      await setup({
+        card: getQuestionCard({ description: null, can_write: false }),
       });
-      expect(
-        screen.queryByPlaceholderText("No description"),
-      ).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("No description")).toBeInTheDocument();
       expect(screen.queryByPlaceholderText("No description")).toBeDisabled();
     });
   });

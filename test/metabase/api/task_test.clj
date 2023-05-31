@@ -1,11 +1,12 @@
 (ns metabase.api.task-test
-  (:require [clojure.test :refer :all]
-            [java-time :as t]
-            [metabase.models.task-history :refer [TaskHistory]]
-            [metabase.test :as mt]
-            [metabase.util :as u]
-            [schema.core :as s]
-            [toucan.db :as db]))
+  (:require
+   [clojure.test :refer :all]
+   [java-time :as t]
+   [metabase.models.task-history :refer [TaskHistory]]
+   [metabase.test :as mt]
+   [metabase.util :as u]
+   [schema.core :as s]
+   [toucan2.core :as t2]))
 
 (def ^:private default-task-history
   {:id true, :db_id true, :started_at true, :ended_at true, :duration 10, :task_details nil})
@@ -67,7 +68,7 @@
 
 (deftest paging-test
   (testing "Check that paging information is applied when provided and included in the response"
-    (db/delete! TaskHistory)
+    (t2/delete! TaskHistory)
     (let [[task-hist-1 task-hist-2 task-hist-3 task-hist-4] (generate-tasks 4)]
       (mt/with-temp* [TaskHistory [_ task-hist-1]
                       TaskHistory [_ task-hist-2]

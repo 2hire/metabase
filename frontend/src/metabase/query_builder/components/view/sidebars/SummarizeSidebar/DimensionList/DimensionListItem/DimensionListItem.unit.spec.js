@@ -1,12 +1,17 @@
 import React from "react";
-import { render } from "@testing-library/react";
-import { metadata, ORDERS } from "__support__/sample_database_fixture";
+import { render, screen } from "@testing-library/react";
+import { createMockMetadata } from "__support__/metadata";
 
+import { createSampleDatabase, ORDERS } from "metabase-types/api/mocks/presets";
 import Dimension from "metabase-lib/Dimension";
 
 import { DimensionListItem } from "./DimensionListItem";
 
-const mbql = ["field", ORDERS.TOTAL.id, null];
+const metadata = createMockMetadata({
+  databases: [createSampleDatabase()],
+});
+
+const mbql = ["field", ORDERS.TOTAL, null];
 const dimension = Dimension.parseMBQL(mbql, metadata);
 const dimensions = [dimension];
 
@@ -39,14 +44,14 @@ describe("DimensionListItem", () => {
   });
 
   it("renders remove button when selected", () => {
-    const { queryByLabelText } = setup({ isSelected: true });
-    expect(queryByLabelText("Add dimension")).toBeNull();
-    expect(queryByLabelText("Remove dimension")).not.toBeNull();
+    setup({ isSelected: true });
+    expect(screen.queryByLabelText("Add dimension")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Remove dimension")).toBeInTheDocument();
   });
 
   it("renders add button when not selected", () => {
-    const { queryByLabelText } = setup({ isSelected: false });
-    expect(queryByLabelText("Remove dimension")).toBeNull();
-    expect(queryByLabelText("Add dimension")).not.toBeNull();
+    setup({ isSelected: false });
+    expect(screen.queryByLabelText("Remove dimension")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Add dimension")).toBeInTheDocument();
   });
 });

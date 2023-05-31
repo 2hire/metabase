@@ -2,21 +2,22 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { getIn } from "icepick";
 import type { LocationDescriptor } from "history";
 
+import { useMount } from "react-use";
 import { IconProps } from "metabase/components/Icon";
 
-import { IS_EMBED_PREVIEW } from "metabase/lib/embed";
-import { SERVER_ERROR_TYPES } from "metabase/lib/errors";
 import Utils from "metabase/lib/utils";
 
-import { useOnMount } from "metabase/hooks/use-on-mount";
-
-import {
-  getGenericErrorMessage,
-  getPermissionErrorMessage,
-} from "metabase/visualizations/lib/errors";
 import { mergeSettings } from "metabase/visualizations/lib/settings";
 
-import { isVirtualDashCard } from "metabase/dashboard/utils";
+import {
+  getDashcardResultsError,
+  isDashcardLoading,
+  isVirtualDashCard,
+} from "metabase/dashboard/utils";
+
+import { isActionCard } from "metabase/actions/utils";
+
+import ErrorBoundary from "metabase/ErrorBoundary";
 
 import type {
   Card,
@@ -24,15 +25,13 @@ import type {
   Dashboard,
   DashboardOrderedCard,
   DashCardId,
-  VisualizationSettings,
-} from "metabase-types/api";
-import type { DatasetData } from "metabase-types/types/Dataset";
-import type {
   ParameterId,
   ParameterValueOrArray,
-} from "metabase-types/types/Parameter";
-import type { Series } from "metabase-types/types/Visualization";
+  VisualizationSettings,
+  Dataset,
+} from "metabase-types/api";
 
+import { DASHBOARD_SLOW_TIMEOUT } from "metabase/dashboard/constants";
 import { getParameterValuesBySlug } from "metabase-lib/parameters/utils/parameter-values";
 
 import type Mode from "metabase-lib/Mode";
@@ -47,39 +46,8 @@ import DashCardActionButtons from "./DashCardActionButtons";
 import DashCardVisualization from "./DashCardVisualization";
 import { DashCardRoot, DashboardCardActionsPanel } from "./DashCard.styled";
 
-const DATASET_USUALLY_FAST_THRESHOLD = 15 * 1000;
-
 function preventDragging(event: React.SyntheticEvent) {
   event.stopPropagation();
-}
-
-function getSeriesError(series: Series) {
-  const isAccessRestricted = series.some(
-    s =>
-      s.error_type === SERVER_ERROR_TYPES.missingPermissions ||
-      s.error?.status === 403,
-  );
-
-  if (isAccessRestricted) {
-    return {
-      message: getPermissionErrorMessage(),
-      icon: "key",
-    };
-  }
-
-  const errors = series.map(s => s.error).filter(Boolean);
-  if (errors.length > 0) {
-    if (IS_EMBED_PREVIEW) {
-      const message = errors[0]?.data || getGenericErrorMessage();
-      return { message, icon: "warning" };
-    }
-    return {
-      message: getGenericErrorMessage(),
-      icon: "warning",
-    };
-  }
-
-  return;
 }
 
 interface DashCardProps {
@@ -87,7 +55,7 @@ interface DashCardProps {
   dashcard: DashboardOrderedCard & { justAdded?: boolean };
   gridItemWidth: number;
   totalNumGridCols: number;
-  dashcardData: Record<DashCardId, Record<CardId, DatasetData>>;
+  dashcardData: Record<DashCardId, Record<CardId, Dataset>>;
   slowCards: Record<CardId, boolean>;
   parameterValues: Record<ParameterId, ParameterValueOrArray>;
   metadata: Metadata;
@@ -100,6 +68,7 @@ interface DashCardProps {
   isFullscreen?: boolean;
   isMobile?: boolean;
   isNightMode?: boolean;
+  isPublic?: boolean;
 
   headerIcon?: IconProps;
 
@@ -129,6 +98,7 @@ function DashCard({
   isNightMode = false,
   isFullscreen = false,
   isMobile = false,
+  isPublic = false,
   isEditingParameter,
   clickBehaviorSidebarDashcard,
   headerIcon,
@@ -148,7 +118,7 @@ function DashCard({
     setIsPreviewingCard(wasPreviewingCard => !wasPreviewingCard);
   }, []);
 
-  useOnMount(() => {
+  useMount(() => {
     if (dashcard.justAdded) {
       cardRootRef?.current?.scrollIntoView({
         block: "nearest",
@@ -182,18 +152,16 @@ function DashCard({
       isSlow: slowCards[card.id],
       isUsuallyFast:
         card.query_average_duration &&
-        card.query_average_duration < DATASET_USUALLY_FAST_THRESHOLD,
+        card.query_average_duration < DASHBOARD_SLOW_TIMEOUT,
     }));
   }, [cards, dashcard.id, dashcardData, slowCards]);
 
-  const isLoading = useMemo(() => {
-    if (isVirtualDashCard(dashcard)) {
-      return false;
-    }
-    const hasSeries = series.length > 0 && series.every(s => s.data);
-    return !hasSeries;
-  }, [dashcard, series]);
+  const isLoading = useMemo(
+    () => isDashcardLoading(dashcard, dashcardData),
+    [dashcard, dashcardData],
+  );
 
+  const isAction = isActionCard(mainCard);
   const isEmbed = Utils.isJWT(dashcard.dashboard_id);
 
   const { expectedDuration, isSlow } = useMemo(() => {
@@ -208,7 +176,7 @@ function DashCard({
     return { expectedDuration, isSlow };
   }, [series, isLoading]);
 
-  const error = useMemo(() => getSeriesError(series), [series]);
+  const error = useMemo(() => getDashcardResultsError(series), [series]);
   const hasError = !!error;
 
   const parameterValuesBySlug = useMemo(
@@ -228,9 +196,9 @@ function DashCard({
 
     return (
       mainCard.visualization_settings["dashcard.background"] === false ||
-      mainCard.display === "list"
+      isAction
     );
-  }, [isEditing, mainCard]);
+  }, [isEditing, isAction, mainCard]);
 
   const isEditingDashboardLayout =
     isEditing && !clickBehaviorSidebarDashcard && !isEditingParameter;
@@ -267,16 +235,21 @@ function DashCard({
   const renderDashCardActions = useCallback(() => {
     if (isEditingDashboardLayout) {
       return (
-        <DashboardCardActionsPanel onMouseDown={preventDragging}>
+        <DashboardCardActionsPanel
+          onMouseDown={preventDragging}
+          data-testid="dashboardcard-actions-panel"
+        >
           <DashCardActionButtons
             series={series}
             dashboard={dashboard}
+            dashcard={dashcard}
             isLoading={isLoading}
             isPreviewing={isPreviewingCard}
             isVirtualDashCard={isVirtualDashCard(dashcard)}
             hasError={hasError}
             onAddSeries={onAddSeries}
             onRemove={onRemove}
+            onUpdateVisualizationSettings={onUpdateVisualizationSettings}
             onReplaceAllVisualizationSettings={
               onReplaceAllVisualizationSettings
             }
@@ -286,6 +259,7 @@ function DashCard({
         </DashboardCardActionsPanel>
       );
     }
+
     return null;
   }, [
     dashcard,
@@ -298,51 +272,60 @@ function DashCard({
     onAddSeries,
     onRemove,
     onReplaceAllVisualizationSettings,
+    onUpdateVisualizationSettings,
     handlePreviewToggle,
     handleShowClickBehaviorSidebar,
   ]);
 
   return (
-    <DashCardRoot
-      className="Card rounded flex flex-column hover-parent hover--visibility"
-      hasHiddenBackground={hasHiddenBackground}
-      isNightMode={isNightMode}
-      isUsuallySlow={isSlow === "usually-slow"}
-      ref={cardRootRef}
-    >
-      {renderDashCardActions()}
-      <DashCardVisualization
-        dashboard={dashboard}
-        dashcard={dashcard}
-        series={series}
-        parameterValues={parameterValues}
-        parameterValuesBySlug={parameterValuesBySlug}
-        metadata={metadata}
-        mode={mode}
-        gridSize={gridSize}
-        gridItemWidth={gridItemWidth}
-        totalNumGridCols={totalNumGridCols}
-        headerIcon={headerIcon}
-        expectedDuration={expectedDuration}
-        error={error}
-        isEmbed={isEmbed}
-        isEditing={isEditing}
-        isEditingDashCardClickBehavior={isEditingDashCardClickBehavior}
-        isEditingDashboardLayout={isEditingDashboardLayout}
-        isEditingParameter={isEditingParameter}
-        isClickBehaviorSidebarOpen={isClickBehaviorSidebarOpen}
-        isSlow={isSlow}
-        isPreviewing={isPreviewingCard}
-        isFullscreen={isFullscreen}
+    <ErrorBoundary>
+      <DashCardRoot
+        data-testid="dashcard"
+        className="Card rounded flex flex-column hover-parent hover--visibility"
+        hasHiddenBackground={hasHiddenBackground}
         isNightMode={isNightMode}
-        isMobile={isMobile}
-        showClickBehaviorSidebar={showClickBehaviorSidebar}
-        onUpdateVisualizationSettings={onUpdateVisualizationSettings}
-        onChangeCardAndRun={changeCardAndRunHandler}
-        onChangeLocation={onChangeLocation}
-      />
-    </DashCardRoot>
+        isUsuallySlow={isSlow === "usually-slow"}
+        ref={cardRootRef}
+      >
+        {renderDashCardActions()}
+        <DashCardVisualization
+          dashboard={dashboard}
+          dashcard={dashcard}
+          series={series}
+          parameterValues={parameterValues}
+          parameterValuesBySlug={parameterValuesBySlug}
+          metadata={metadata}
+          mode={mode}
+          gridSize={gridSize}
+          gridItemWidth={gridItemWidth}
+          totalNumGridCols={totalNumGridCols}
+          headerIcon={headerIcon}
+          expectedDuration={expectedDuration}
+          error={error}
+          isAction={isAction}
+          isEmbed={isEmbed}
+          isEditing={isEditing}
+          isEditingDashCardClickBehavior={isEditingDashCardClickBehavior}
+          isEditingDashboardLayout={isEditingDashboardLayout}
+          isEditingParameter={isEditingParameter}
+          isClickBehaviorSidebarOpen={isClickBehaviorSidebarOpen}
+          isSlow={isSlow}
+          isPreviewing={isPreviewingCard}
+          isFullscreen={isFullscreen}
+          isNightMode={isNightMode}
+          isMobile={isMobile}
+          isPublic={isPublic}
+          showClickBehaviorSidebar={showClickBehaviorSidebar}
+          onUpdateVisualizationSettings={onUpdateVisualizationSettings}
+          onChangeCardAndRun={changeCardAndRunHandler}
+          onChangeLocation={onChangeLocation}
+        />
+      </DashCardRoot>
+    </ErrorBoundary>
   );
 }
 
-export default DashCard;
+// eslint-disable-next-line import/no-default-export -- deprecated usage
+export default Object.assign(DashCard, {
+  root: DashCardRoot,
+});

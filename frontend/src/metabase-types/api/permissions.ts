@@ -1,6 +1,6 @@
-import { DatabaseId } from "metabase-types/types/Database";
-import { SchemaName, TableId } from "metabase-types/types/Table";
+import type { DatabaseId, TableId, SchemaName } from "metabase-types/api";
 import { GroupId } from "./group";
+import { UserAttribute } from "./user";
 
 export type PermissionsGraph = {
   groups: GroupsPermissions;
@@ -18,6 +18,7 @@ export type GroupPermissions = {
 export type DownloadPermission = "full" | "limited" | "none";
 
 export type DownloadAccessPermission = {
+  native?: DownloadSchemasPermission;
   schemas: DownloadSchemasPermission;
 };
 
@@ -37,9 +38,9 @@ export type DownloadTablePermission =
 
 export type DatabasePermissions = {
   data: DatabaseAccessPermissions;
-  "data-model": DataModelPermissions;
+  "data-model"?: DataModelPermissions;
   download: DownloadAccessPermission;
-  details: DetailsPermissions;
+  details?: DetailsPermissions;
 };
 
 export type DataModelPermissions = {
@@ -68,3 +69,17 @@ export type TablesPermissions =
     };
 
 export type FieldsPermissions = "all" | "none";
+
+// FIXME: is there a more suitable type for this?
+export type DimensionRef = ["dimension", any[]];
+
+export type GroupTableAccessPolicy = {
+  id: number;
+  group_id: number;
+  table_id: number;
+  card_id: number | null;
+  attribute_remappings: {
+    [key: UserAttribute]: DimensionRef;
+  };
+  permission_id: number | null;
+};

@@ -1,12 +1,12 @@
 (ns metabase.query-processor.middleware.parameters.native-test
-  (:require [clojure.test :refer :all]
-            [metabase.driver :as driver]
-            [metabase.models.card :refer [Card]]
-            [metabase.query-processor.middleware.parameters.native :as qp.native]
-            [metabase.test :as mt]
-            [metabase.util :as u]
-            [metabase.util.schema :as su]
-            [schema.core :as s]))
+  (:require
+   [clojure.test :refer :all]
+   [metabase.models.card :refer [Card]]
+   [metabase.query-processor.middleware.parameters.native :as qp.native]
+   [metabase.test :as mt]
+   [metabase.util :as u]
+   [metabase.util.schema :as su]
+   [schema.core :as s]))
 
 (deftest include-card-parameters-test
   (testing "Expanding a Card reference in a native query should include its parameters (#12236)"
@@ -25,8 +25,9 @@
                                          :display-name card-tag
                                          :type         :card
                                          :card-id      (u/the-id card)}}}]
-          (binding [driver/*driver* :h2]
-            (is (schema= {:native   su/NonBlankString
-                          :params   (s/eq ["G%"])
-                          s/Keyword s/Any}
-                         (qp.native/expand-inner query)))))))))
+          (mt/with-driver :h2
+            (mt/with-everything-store
+              (is (schema= {:native   su/NonBlankString
+                            :params   (s/eq ["G%"])
+                            s/Keyword s/Any}
+                           (qp.native/expand-inner query))))))))))

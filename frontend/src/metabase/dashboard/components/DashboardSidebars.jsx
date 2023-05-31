@@ -8,8 +8,9 @@ import ParameterSidebar from "metabase/parameters/components/ParameterSidebar";
 import SharingSidebar from "metabase/sharing/components/SharingSidebar";
 import * as MetabaseAnalytics from "metabase/lib/analytics";
 import ClickBehaviorSidebar from "./ClickBehaviorSidebar";
-import DashboardInfoSidebar from "./DashboardInfoSidebar";
+import { DashboardInfoSidebar } from "./DashboardInfoSidebar";
 import { AddCardSidebar } from "./add-card-sidebar/AddCardSidebar";
+import { ActionSidebar } from "./ActionSidebar";
 
 DashboardSidebars.propTypes = {
   dashboard: PropTypes.object,
@@ -27,8 +28,9 @@ DashboardSidebars.propTypes = {
   setParameterName: PropTypes.func.isRequired,
   setParameterDefaultValue: PropTypes.func.isRequired,
   setParameterIsMultiSelect: PropTypes.func.isRequired,
+  setParameterQueryType: PropTypes.func.isRequired,
   setParameterSourceType: PropTypes.func.isRequired,
-  setParameterSourceOptions: PropTypes.func.isRequired,
+  setParameterSourceConfig: PropTypes.func.isRequired,
   setParameterFilteringParameters: PropTypes.func.isRequired,
   dashcardData: PropTypes.object,
   isSharing: PropTypes.bool.isRequired,
@@ -43,6 +45,7 @@ DashboardSidebars.propTypes = {
   closeSidebar: PropTypes.func.isRequired,
   setDashboardAttribute: PropTypes.func,
   saveDashboardAndCards: PropTypes.func,
+  selectedTabId: PropTypes.number,
 };
 
 export function DashboardSidebars({
@@ -59,8 +62,9 @@ export function DashboardSidebars({
   setParameterName,
   setParameterDefaultValue,
   setParameterIsMultiSelect,
+  setParameterQueryType,
   setParameterSourceType,
-  setParameterSourceOptions,
+  setParameterSourceConfig,
   setParameterFilteringParameters,
   dashcardData,
   isFullscreen,
@@ -70,16 +74,18 @@ export function DashboardSidebars({
   closeSidebar,
   setDashboardAttribute,
   saveDashboardAndCards,
+  selectedTabId,
 }) {
   const handleAddCard = useCallback(
     cardId => {
       addCardToDashboard({
         dashId: dashboard.id,
         cardId: cardId,
+        tabId: selectedTabId,
       });
       MetabaseAnalytics.trackStructEvent("Dashboard", "Add Card");
     },
-    [addCardToDashboard, dashboard.id],
+    [addCardToDashboard, dashboard.id, selectedTabId],
   );
 
   if (isFullscreen) {
@@ -94,6 +100,22 @@ export function DashboardSidebars({
           onSelect={handleAddCard}
         />
       );
+    case SIDEBAR_NAME.action: {
+      const onUpdateVisualizationSettings = settings =>
+        onUpdateDashCardVisualizationSettings(
+          sidebar.props.dashcardId,
+          settings,
+        );
+
+      return (
+        <ActionSidebar
+          dashboard={dashboard}
+          dashcardId={sidebar.props.dashcardId}
+          onUpdateVisualizationSettings={onUpdateVisualizationSettings}
+          onClose={closeSidebar}
+        />
+      );
+    }
     case SIDEBAR_NAME.clickBehavior:
       return (
         <ClickBehaviorSidebar
@@ -124,8 +146,9 @@ export function DashboardSidebars({
           onChangeName={setParameterName}
           onChangeDefaultValue={setParameterDefaultValue}
           onChangeIsMultiSelect={setParameterIsMultiSelect}
+          onChangeQueryType={setParameterQueryType}
           onChangeSourceType={setParameterSourceType}
-          onChangeSourceOptions={setParameterSourceOptions}
+          onChangeSourceConfig={setParameterSourceConfig}
           onChangeFilteringParameters={setParameterFilteringParameters}
           onRemoveParameter={removeParameter}
           onShowAddParameterPopover={showAddParameterPopover}

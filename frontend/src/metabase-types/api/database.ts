@@ -1,5 +1,7 @@
 import { NativePermissions } from "./permissions";
 import { ScheduleSettings } from "./settings";
+import { Table } from "./table";
+import { ISO8601Time } from ".";
 
 export type DatabaseId = number;
 
@@ -7,22 +9,47 @@ export type InitialSyncStatus = "incomplete" | "complete" | "aborted";
 
 export type DatabaseSettings = {
   [key: string]: any;
+  "database-enable-actions"?: boolean;
 };
+
+export type DatabaseFeature =
+  | "actions"
+  | "basic-aggregations"
+  | "binning"
+  | "case-sensitivity-string-filter-options"
+  | "dynamic-schema"
+  | "expression-aggregations"
+  | "expressions"
+  | "foreign-keys"
+  | "native-parameters"
+  | "nested-queries"
+  | "standard-deviation-aggregations"
+  | "percentile-aggregations"
+  | "persist-models"
+  | "persist-models-enabled"
+  | "schemas"
+  | "set-timezone"
+  | "left-join"
+  | "right-join"
+  | "inner-join"
+  | "full-join";
 
 export interface Database extends DatabaseData {
   id: DatabaseId;
   is_saved_questions: boolean;
+  features: DatabaseFeature[];
   creator_id?: number;
-  created_at: string;
   timezone?: string;
   native_permissions: NativePermissions;
   initial_sync_status: InitialSyncStatus;
-
-  // appears in frontend/src/metabase/writeback/utils.ts
-  settings?: DatabaseSettings | null;
+  caveats?: string;
+  points_of_interest?: string;
+  created_at: ISO8601Time;
+  updated_at: ISO8601Time;
 
   // Only appears in  GET /api/database/:id
   "can-manage"?: boolean;
+  tables?: Table[];
 }
 
 export interface DatabaseData {
@@ -37,9 +64,42 @@ export interface DatabaseData {
   is_sample: boolean;
   is_full_sync: boolean;
   is_on_demand: boolean;
+  settings?: DatabaseSettings | null;
 }
 
 export interface DatabaseSchedules {
   metadata_sync?: ScheduleSettings;
   cache_field_values?: ScheduleSettings;
+}
+
+export interface DatabaseUsageInfo {
+  question: number;
+  dataset: number;
+  metric: number;
+  segment: number;
+}
+
+export interface DatabaseQuery {
+  include?: "tables" | "tables.fields";
+  include_editable_data_model?: boolean;
+  exclude_uneditable_details?: boolean;
+}
+
+export interface DatabaseListQuery {
+  include?: "tables";
+  include_cards?: boolean;
+  include_tables?: boolean;
+  saved?: boolean;
+  include_editable_data_model?: boolean;
+  exclude_uneditable_details?: boolean;
+}
+
+export interface DatabaseIdFieldListQuery {
+  include_editable_data_model?: boolean;
+}
+
+export interface SavedQuestionDatabase {
+  id: -1337;
+  name: "Saved Questions";
+  is_saved_questions: true;
 }
