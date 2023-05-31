@@ -1,21 +1,22 @@
 (ns metabase.query-processor.middleware.results-metadata-test
-  (:require [clojure.string :as str]
-            [clojure.test :refer :all]
-            [metabase.mbql.schema :as mbql.s]
-            [metabase.models :refer [Card Collection Dimension Field]]
-            [metabase.models.permissions :as perms]
-            [metabase.models.permissions-group :as perms-group]
-            [metabase.query-processor :as qp]
-            [metabase.query-processor.util :as qp.util]
-            [metabase.sync.analyze.query-results :as qr]
-            [metabase.test :as mt]
-            [metabase.util :as u]
-            [metabase.util.schema :as su]
-            [schema.core :as s]
-            [toucan.db :as db]))
+  (:require
+   [clojure.string :as str]
+   [clojure.test :refer :all]
+   [metabase.mbql.schema :as mbql.s]
+   [metabase.models :refer [Card Collection Dimension Field]]
+   [metabase.models.permissions :as perms]
+   [metabase.models.permissions-group :as perms-group]
+   [metabase.query-processor :as qp]
+   [metabase.query-processor.util :as qp.util]
+   [metabase.sync.analyze.query-results :as qr]
+   [metabase.test :as mt]
+   [metabase.util :as u]
+   [metabase.util.schema :as su]
+   [schema.core :as s]
+   [toucan2.core :as t2]))
 
 (defn- card-metadata [card]
-  (db/select-one-field :result_metadata Card :id (u/the-id card)))
+  (t2/select-one-fn :result_metadata Card :id (u/the-id card)))
 
 (defn- round-to-2-decimals
   "Defaults [[mt/round-all-decimals]] to 2 digits"
@@ -23,7 +24,7 @@
   (mt/round-all-decimals 2 data))
 
 (defn- default-card-results []
-  (let [id->fingerprint   (db/select-id->field :fingerprint Field :table_id (mt/id :venues))
+  (let [id->fingerprint   (t2/select-pk->fn :fingerprint Field :table_id (mt/id :venues))
         name->fingerprint (comp id->fingerprint (partial mt/id :venues))]
     [{:name           "ID"
       :display_name   "ID"

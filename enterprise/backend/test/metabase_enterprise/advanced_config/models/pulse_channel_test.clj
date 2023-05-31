@@ -1,12 +1,13 @@
 (ns metabase-enterprise.advanced-config.models.pulse-channel-test
-  (:require [clojure.string :as str]
-            [clojure.test :refer :all]
-            [metabase.models :refer [Pulse PulseChannel]]
-            [metabase.public-settings.premium-features-test :as premium-features-test]
-            [metabase.test :as mt]
-            [metabase.util :as u]
-            [toucan.db :as db]
-            [toucan.util.test :as tt]))
+  (:require
+   [clojure.string :as str]
+   [clojure.test :refer :all]
+   [metabase.models :refer [Pulse PulseChannel]]
+   [metabase.public-settings.premium-features-test :as premium-features-test]
+   [metabase.test :as mt]
+   [metabase.util :as u]
+   [toucan.util.test :as tt]
+   [toucan2.core :as t2]))
 
 (deftest validate-email-domains-test
   (mt/with-temp Pulse [{pulse-id :id}]
@@ -34,13 +35,13 @@
                         (format "\nEmails = %s" (pr-str emails)))
             (let [thunk (case operation
                           :create
-                          #(db/insert! PulseChannel
-                             (merge (tt/with-temp-defaults PulseChannel)
-                                    {:pulse_id pulse-id, :details {:emails emails}}))
+                          #(first (t2/insert-returning-instances! PulseChannel
+                                                                  (merge (tt/with-temp-defaults PulseChannel)
+                                                                         {:pulse_id pulse-id, :details {:emails emails}})))
 
                           :update
                           #(mt/with-temp PulseChannel [{pulse-channel-id :id} {:pulse_id pulse-id}]
-                             (db/update! PulseChannel pulse-channel-id, :details {:emails emails})))]
+                             (t2/update! PulseChannel pulse-channel-id {:details {:emails emails}})))]
               (if fail?
                 (testing "should fail"
                   (is (thrown-with-msg?

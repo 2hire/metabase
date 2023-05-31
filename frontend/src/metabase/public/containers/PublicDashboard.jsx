@@ -5,7 +5,7 @@ import { push } from "react-router-redux";
 import cx from "classnames";
 
 import _ from "underscore";
-import { IFRAMED } from "metabase/lib/dom";
+import { isWithinIframe } from "metabase/lib/dom";
 
 import LoadingAndErrorWrapper from "metabase/components/LoadingAndErrorWrapper";
 import DashboardGrid from "metabase/dashboard/components/DashboardGrid";
@@ -25,6 +25,7 @@ import {
   getSlowCards,
   getParameters,
   getParameterValues,
+  getDraftParameterValues,
 } from "metabase/dashboard/selectors";
 
 import * as dashboardActions from "metabase/dashboard/actions";
@@ -45,6 +46,7 @@ const mapStateToProps = (state, props) => {
     slowCards: getSlowCards(state, props),
     parameters: getParameters(state, props),
     parameterValues: getParameterValues(state, props),
+    draftParameterValues: getDraftParameterValues(state, props),
   };
 };
 
@@ -76,7 +78,7 @@ class PublicDashboard extends Component {
     initialize();
     try {
       await fetchDashboard(uuid || token, location.query);
-      await fetchDashboardCardData({ reload: false, clear: true });
+      await fetchDashboardCardData({ reload: false, clearCache: true });
     } catch (error) {
       console.error(error);
       setErrorPage(error);
@@ -97,7 +99,7 @@ class PublicDashboard extends Component {
     }
 
     if (!_.isEqual(this.props.parameterValues, prevProps.parameterValues)) {
-      this.props.fetchDashboardCardData({ reload: false, clear: true });
+      this.props.fetchDashboardCardData({ reload: false, clearCache: true });
     }
   }
 
@@ -106,10 +108,11 @@ class PublicDashboard extends Component {
       dashboard,
       parameters,
       parameterValues,
+      draftParameterValues,
       isFullscreen,
       isNightMode,
     } = this.props;
-    const buttons = !IFRAMED
+    const buttons = !isWithinIframe()
       ? getDashboardActions(this, { ...this.props, isPublic: true })
       : [];
 
@@ -120,6 +123,7 @@ class PublicDashboard extends Component {
         dashboard={dashboard}
         parameters={parameters}
         parameterValues={parameterValues}
+        draftParameterValues={draftParameterValues}
         setParameterValue={this.props.setParameterValue}
         actionButtons={
           buttons.length > 0 && <div className="flex">{buttons}</div>
@@ -135,6 +139,7 @@ class PublicDashboard extends Component {
           {() => (
             <DashboardGrid
               {...this.props}
+              isPublic
               className="spread"
               mode={PublicMode}
               metadata={this.props.metadata}

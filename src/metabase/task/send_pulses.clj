@@ -1,19 +1,24 @@
 (ns metabase.task.send-pulses
   "Tasks related to running `Pulses`."
-  (:require [clj-time.core :as time]
-            [clj-time.predicates :as timepr]
-            [clojure.tools.logging :as log]
-            [clojurewerkz.quartzite.jobs :as jobs]
-            [clojurewerkz.quartzite.schedule.cron :as cron]
-            [clojurewerkz.quartzite.triggers :as triggers]
-            [metabase.driver :as driver]
-            [metabase.models.pulse :as pulse]
-            [metabase.models.pulse-channel :as pulse-channel]
-            [metabase.models.task-history :as task-history]
-            metabase.pulse
-            [metabase.task :as task]
-            [metabase.util.i18n :refer [trs]]
-            [schema.core :as s]))
+  (:require
+   [clj-time.core :as time]
+   [clj-time.predicates :as timepr]
+   [clojurewerkz.quartzite.jobs :as jobs]
+   [clojurewerkz.quartzite.schedule.cron :as cron]
+   [clojurewerkz.quartzite.triggers :as triggers]
+   [metabase.driver :as driver]
+   [metabase.models :refer [PulseChannel PulseChannelRecipient]]
+   [metabase.models.pulse :as pulse]
+   [metabase.models.pulse-channel :as pulse-channel]
+   [metabase.models.task-history :as task-history]
+   [metabase.pulse]
+   [metabase.task :as task]
+   [metabase.util.i18n :refer [trs]]
+   [metabase.util.log :as log]
+   [schema.core :as s]
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 ;;; ------------------------------------------------- PULSE SENDING --------------------------------------------------
 
@@ -58,6 +63,14 @@
          (catch Throwable e
            (on-error pulse-id e)))))))
 
+(s/defn ^:private clear-pulse-channels!
+  []
+  (doseq [channel (t2/select PulseChannel)]
+    (let [pulse-channel-id (:id channel)]
+      (when (and (nil? (get-in channel [:details :emails]))
+                 (nil? (get-in channel [:details :channel]))
+                 (zero? (t2/count PulseChannelRecipient :pulse_channel_id pulse-channel-id)))
+        (t2/delete! PulseChannel :id pulse-channel-id)))))
 
 ;;; ------------------------------------------------------ Task ------------------------------------------------------
 
@@ -93,7 +106,8 @@
                                     :id)
             curr-monthday      (monthday now)
             curr-monthweek     (monthweek now)]
-        (send-pulses! curr-hour curr-weekday curr-monthday curr-monthweek)))
+        (send-pulses! curr-hour curr-weekday curr-monthday curr-monthweek))
+      (clear-pulse-channels!))
     (catch Throwable e
       (log/error e (trs "SendPulses task failed")))))
 

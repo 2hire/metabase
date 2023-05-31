@@ -1,18 +1,21 @@
 (ns metabase.integrations.slack
-  (:require [cheshire.core :as json]
-            [clj-http.client :as http]
-            [clojure.java.io :as io]
-            [clojure.string :as str]
-            [clojure.tools.logging :as log]
-            [java-time :as t]
-            [medley.core :as m]
-            [metabase.email.messages :as messages]
-            [metabase.models.setting :as setting :refer [defsetting]]
-            [metabase.util :as u]
-            [metabase.util.date-2 :as u.date]
-            [metabase.util.i18n :refer [deferred-tru trs tru]]
-            [metabase.util.schema :as su]
-            [schema.core :as s]))
+  (:require
+   [cheshire.core :as json]
+   [clj-http.client :as http]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [java-time :as t]
+   [medley.core :as m]
+   [metabase.email.messages :as messages]
+   [metabase.models.setting :as setting :refer [defsetting]]
+   [metabase.util :as u]
+   [metabase.util.date-2 :as u.date]
+   [metabase.util.i18n :refer [deferred-tru trs tru]]
+   [metabase.util.log :as log]
+   [metabase.util.schema :as su]
+   [schema.core :as s]))
+
+(set! *warn-on-reflection* true)
 
 (defsetting slack-token
   (deferred-tru
@@ -189,12 +192,13 @@
                         params)))
 
 (defn channel-exists?
-  "Returns true if the channel it exists."
+  "Returns a Boolean indicating whether a channel with a given name exists in the cache."
   [channel-name]
-  (let [channel-names (into #{} (comp (map (juxt :name :id))
-                                      cat)
-                            (:channels (slack-cached-channels-and-usernames)))]
-    (and channel-name (contains? channel-names channel-name))))
+  (boolean
+   (let [channel-names (into #{} (comp (map (juxt :name :id))
+                                       cat)
+                             (:channels (slack-cached-channels-and-usernames)))]
+     (and channel-name (contains? channel-names channel-name)))))
 
 (s/defn valid-token?
   "Check whether a Slack token is valid by checking if the `conversations.list` Slack api accepts it."

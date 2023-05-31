@@ -1,15 +1,16 @@
 (ns metabase.query-processor.card-test
   "There are more e2e tests in [[metabase.api.card-test]]."
-  (:require [clojure.test :refer :all]
-            [metabase.api.common :as api]
-            [metabase.models :refer [Card Dashboard Database]]
-            [metabase.models.query :as query]
-            [metabase.public-settings :as public-settings]
-            [metabase.query-processor :as qp]
-            [metabase.query-processor.card :as qp.card]
-            [metabase.test :as mt]
-            [metabase.util :as u]
-            [schema.core :as s]))
+  (:require
+   [clojure.test :refer :all]
+   [metabase.api.common :as api]
+   [metabase.models :refer [Card Dashboard Database]]
+   [metabase.models.query :as query]
+   [metabase.public-settings :as public-settings]
+   [metabase.query-processor :as qp]
+   [metabase.query-processor.card :as qp.card]
+   [metabase.test :as mt]
+   [metabase.util :as u]
+   [schema.core :as s]))
 
 (defn run-query-for-card
   "Run query for Card synchronously."
@@ -40,12 +41,13 @@
                       Dashboard [dash {:cache_ttl 1338}]
                       Card [card {:database_id (u/the-id db)}]]
         (is (= (* 3600 1338) (:cache-ttl (#'qp.card/query-for-card card {} {} {} {:dashboard-id (u/the-id dash)}))))))
-    (testing "multiple ttl, db wins"
+    (testing "multiple ttl, db ttl does not take effect on OSS so nil result"
+      ;; corresponding EE test in metabase-enterprise.advanced-config.caching-test
       (mt/with-temp* [Database [db {:cache_ttl 1337}]
                       Dashboard [dash]
                       Card [card {:database_id (u/the-id db)}]]
-        (is (= (* 3600 1337) (:cache-ttl (#'qp.card/query-for-card card {} {} {} {:dashboard-id (u/the-id dash)}))))))
-    (testing "no ttl, nil res"
+        (is (= nil (:cache-ttl (#'qp.card/query-for-card card {} {} {} {:dashboard-id (u/the-id dash)}))))))
+    (testing "no ttl, nil result"
       (mt/with-temp* [Database [db]
                       Dashboard [dash]
                       Card [card {:database_id (u/the-id db)}]]

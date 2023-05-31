@@ -1,16 +1,19 @@
 (ns metabase.automagic-dashboards.populate
   "Create and save models that make up automagic dashboards."
-  (:require [clojure.string :as str]
-            [clojure.tools.logging :as log]
-            [medley.core :as m]
-            [metabase.api.common :as api]
-            [metabase.automagic-dashboards.filters :as filters]
-            [metabase.models.card :as card]
-            [metabase.models.collection :as collection]
-            [metabase.public-settings :as public-settings]
-            [metabase.query-processor.util :as qp.util]
-            [metabase.util.i18n :refer [trs]]
-            [toucan.db :as db]))
+  (:require
+   [clojure.string :as str]
+   [medley.core :as m]
+   [metabase.api.common :as api]
+   [metabase.automagic-dashboards.filters :as filters]
+   [metabase.models.card :as card]
+   [metabase.models.collection :as collection]
+   [metabase.public-settings :as public-settings]
+   [metabase.query-processor.util :as qp.util]
+   [metabase.util.i18n :refer [trs]]
+   [metabase.util.log :as log]
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 (def ^Long grid-width
   "Total grid width."
@@ -25,21 +28,22 @@
   4)
 
 (defn create-collection!
-  "Create a new collection."
+  "Create and return a new collection."
   [title color description parent-collection-id]
-  (db/insert! 'Collection
-    (merge
-     {:name        title
-      :color       color
-      :description description}
-     (when parent-collection-id
-       {:location (collection/children-location (db/select-one ['Collection :location :id]
-                                                  :id parent-collection-id))}))))
+  (first (t2/insert-returning-instances!
+           'Collection
+           (merge
+             {:name        title
+              :color       color
+              :description description}
+             (when parent-collection-id
+               {:location (collection/children-location (t2/select-one ['Collection :location :id]
+                                                                       :id parent-collection-id))})))))
 
 (defn get-or-create-root-container-collection
   "Get or create container collection for automagic dashboards in the root collection."
   []
-  (or (db/select-one 'Collection
+  (or (t2/select-one 'Collection
         :name     "Automatically Generated Dashboards"
         :location "/")
       (create-collection! "Automatically Generated Dashboards" "#509EE3" nil nil)))

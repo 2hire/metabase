@@ -1,7 +1,9 @@
 (ns metabase.cmd.endpoint-dox-test
-  (:require [clojure.test :refer :all]
-            [metabase.cmd.endpoint-dox :as endpoint-dox]
-            [metabase.config :as config]))
+  (:require
+   [clojure.test :refer :all]
+   [metabase.api.activity]
+   [metabase.cmd.endpoint-dox :as endpoint-dox]
+   [metabase.config :as config]))
 
 (deftest capitalize-initialisms-test
   (testing "Select initialisms and acronyms are in all caps."

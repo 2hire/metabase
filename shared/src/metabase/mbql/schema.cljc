@@ -2,24 +2,25 @@
   "Schema for validating a *normalized* MBQL query. This is also the definitive grammar for MBQL, wow!"
   (:refer-clojure :exclude [count distinct min max + - / * and or not not-empty = < > <= >= time case concat replace abs])
   #?@
-  (:clj
-   [(:require
-     [clojure.core :as core]
-     [clojure.set :as set]
-     [metabase.mbql.schema.helpers :as helpers :refer [is-clause?]]
-     [metabase.mbql.schema.macros :refer [defclause one-of]]
-     [schema.core :as s])
-    (:import java.time.format.DateTimeFormatter
-             java.time.ZoneId)]
-   :cljs
-   [(:require
-     ["moment" :as moment]
-     ["moment-timezone" :as mtz]
-     [clojure.core :as core]
-     [clojure.set :as set]
-     [metabase.mbql.schema.helpers :as helpers :refer [is-clause?]]
-     [metabase.mbql.schema.macros :refer [defclause one-of]]
-     [schema.core :as s])]))
+   (:clj
+    [(:require
+      [clojure.core :as core]
+      [clojure.set :as set]
+      [metabase.mbql.schema.helpers :as helpers :refer [is-clause?]]
+      [metabase.mbql.schema.macros :refer [defclause one-of]]
+      [schema.core :as s])
+     (:import
+      (java.time ZoneId)
+      (java.time.format DateTimeFormatter))]
+    :cljs
+    [(:require
+      ["moment" :as moment]
+      ["moment-timezone" :as mtz]
+      [clojure.core :as core]
+      [clojure.set :as set]
+      [metabase.mbql.schema.helpers :as helpers :refer [is-clause?]]
+      [metabase.mbql.schema.macros :refer [defclause one-of]]
+      [schema.core :as s])]))
 
 #?(:cljs
    (comment
@@ -300,7 +301,7 @@
 ;; `wrap-value-literals` middleware. This is done to make it easier to implement query processors, because most driver
 ;; implementations dispatch off of Object type, which is often not enough to make informed decisions about how to
 ;; treat certain objects. For example, a string compared against a Postgres UUID Field needs to be parsed into a UUID
-;; object, since text <-> UUID comparision doesn't work in Postgres. For this reason, raw literals in `:filter`
+;; object, since text <-> UUID comparison doesn't work in Postgres. For this reason, raw literals in `:filter`
 ;; clauses are wrapped in `:value` clauses and given information about the type of the Field they will be compared to.
 (defclause ^:internal value
   value    s/Any
@@ -440,14 +441,6 @@
    (fn [[_ id-or-name]]
      (integer? id-or-name))
    "Must be a :field with an integer Field ID."))
-
-(def ^{:clause-name :field, :added "0.39.0"} field:name
-  "Schema for a `:field` clause, with the added constraint that it must use an string Field name."
-  (s/constrained
-   field
-   (fn [[_ id-or-name]]
-     (string? id-or-name))
-   "Must be a :field with a string Field name."))
 
 (def ^:private Field*
   (one-of expression field))
@@ -596,11 +589,16 @@
     interval
     NumericExpressionArg))
 
+(def ^:private IntGreaterThanZeroOrNumericExpression
+  (s/if number?
+    helpers/IntGreaterThanZero
+    NumericExpressionArg))
+
 (defclause ^{:requires-features #{:expressions}} coalesce
   a ExpressionArg, b ExpressionArg, more (rest ExpressionArg))
 
 (defclause ^{:requires-features #{:expressions}} substring
-  s StringExpressionArg, start NumericExpressionArg, length (optional NumericExpressionArg))
+  s StringExpressionArg, start IntGreaterThanZeroOrNumericExpression, length (optional NumericExpressionArg))
 
 (defclause ^{:requires-features #{:expressions}} length
   s StringExpressionArg)
@@ -775,7 +773,7 @@
    Field))
 
 (def ^:private EqualityComparable
-  "Schema for things things that make sense in a `=` or `!=` filter, i.e. things that can be compared for equality."
+  "Schema for things that make sense in a `=` or `!=` filter, i.e. things that can be compared for equality."
   (s/maybe
    (s/cond-pre
     s/Bool
@@ -926,7 +924,6 @@
 (def ^:private StringExpression*
   (one-of substring trim ltrim rtrim replace lower upper concat regex-match-first coalesce case))
 
-
 (def FieldOrExpressionDef
   "Schema for anything that is accepted as a top-level expression definition, either an arithmetic expression such as a
   `:+` clause or a `:field` clause."
@@ -935,8 +932,8 @@
    (partial is-clause? string-functions)   StringExpression
    (partial is-clause? boolean-functions)  BooleanExpression
    (partial is-clause? datetime-functions) DatetimeExpression
-   (partial is-clause? :case)                        case
-   :else                                             Field))
+   (partial is-clause? :case)              case
+   :else                                   Field))
 
 ;;; -------------------------------------------------- Aggregations --------------------------------------------------
 
@@ -974,7 +971,6 @@
 (defclause ^{:requires-features #{:standard-deviation-aggregations}} stddev
   field-or-expression FieldOrExpressionDef)
 
-(declare ag:var) ;; for clj-kondo
 (defclause ^{:requires-features #{:standard-deviation-aggregations}} [ag:var var]
   field-or-expression FieldOrExpressionDef)
 
@@ -1131,7 +1127,7 @@
     ;; whether or not a value for this parameter is required in order to run the query
     (s/optional-key :required) s/Bool}))
 
-(declare ParameterType)
+(declare ParameterType WidgetType)
 
 ;; Example:
 ;;
@@ -1149,7 +1145,9 @@
     :dimension   field
     ;; which type of widget the frontend should show for this Field Filter; this also affects which parameter types
     ;; are allowed to be specified for it.
-    :widget-type (s/recursive #'ParameterType)}))
+    :widget-type (s/recursive #'WidgetType)
+    ;; optional map to be appended to filter clause
+    (s/optional-key :options) {s/Keyword s/Any}}))
 
 (def raw-value-template-tag-types
   "Set of valid values of `:type` for raw value template tags."
@@ -1519,14 +1517,13 @@
    :string/ends-with        {:type :string, :operator :unary, :allowed-for #{:string/ends-with}}
    :string/starts-with      {:type :string, :operator :unary, :allowed-for #{:string/starts-with}}})
 
-(defn valid-parameter-type?
-  "Whether `param-type` is a valid non-abstract parameter type."
-  [param-type]
-  (get parameter-types param-type))
-
 (def ParameterType
   "Schema for valid values of `:type` for a [[Parameter]]."
   (apply s/enum (keys parameter-types)))
+
+(def WidgetType
+  "Schema for valid values of `:widget-type` for a [[TemplateTag:FieldFilter]]."
+  (apply s/enum (cons :none (keys parameter-types))))
 
 ;; the next few clauses are used for parameter `:target`... this maps the parameter to an actual template tag in a
 ;; native query or Field for MBQL queries.
@@ -1709,19 +1706,20 @@
   based on this information, don't do it!"
   {;; These keys are nice to pass in if you're running queries on the backend and you know these values. They aren't
    ;; used for permissions checking or anything like that so don't try to be sneaky
-   (s/optional-key :context)      (s/maybe Context)
-   (s/optional-key :executed-by)  (s/maybe helpers/IntGreaterThanZero)
-   (s/optional-key :card-id)      (s/maybe helpers/IntGreaterThanZero)
-   (s/optional-key :card-name)    (s/maybe helpers/NonBlankString)
-   (s/optional-key :dashboard-id) (s/maybe helpers/IntGreaterThanZero)
-   (s/optional-key :pulse-id)     (s/maybe helpers/IntGreaterThanZero)
+   (s/optional-key :context)                   (s/maybe Context)
+   (s/optional-key :executed-by)               (s/maybe helpers/IntGreaterThanZero)
+   (s/optional-key :card-id)                   (s/maybe helpers/IntGreaterThanZero)
+   (s/optional-key :card-name)                 (s/maybe helpers/NonBlankString)
+   (s/optional-key :dashboard-id)              (s/maybe helpers/IntGreaterThanZero)
+   (s/optional-key :alias/escaped->original)   (s/maybe {s/Any s/Any})
+   (s/optional-key :pulse-id)                  (s/maybe helpers/IntGreaterThanZero)
    ;; Metadata for datasets when querying the dataset. This ensures that user edits to dataset metadata are blended in
    ;; with runtime computed metadata so that edits are saved.
    (s/optional-key :metadata/dataset-metadata) (s/maybe [{s/Any s/Any}])
    ;; `:hash` gets added automatically by `process-query-and-save-execution!`, so don't try passing
    ;; these in yourself. In fact, I would like this a lot better if we could take these keys out of `:info` entirely
    ;; and have the code that saves QueryExceutions figure out their values when it goes to save them
-   (s/optional-key :query-hash) (s/maybe #?(:clj (Class/forName "[B")
+   (s/optional-key :query-hash)                (s/maybe #?(:clj (Class/forName "[B")
                                             :cljs s/Any))})
 
 

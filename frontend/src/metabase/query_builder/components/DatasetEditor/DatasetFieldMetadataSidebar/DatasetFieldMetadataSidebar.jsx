@@ -8,6 +8,7 @@ import React, {
 import PropTypes from "prop-types";
 import { t } from "ttag";
 import _ from "underscore";
+import { usePrevious } from "react-use";
 
 import Radio from "metabase/core/components/Radio";
 
@@ -17,13 +18,13 @@ import {
 } from "metabase/lib/core";
 import { getSemanticTypeIcon } from "metabase/lib/schema_metadata";
 import RootForm from "metabase/containers/FormikForm";
-import { usePrevious } from "metabase/hooks/use-previous";
 
 import SidebarContent from "metabase/query_builder/components/SidebarContent";
 import ColumnSettings, {
   hasColumnSettingsWidgets,
 } from "metabase/visualizations/components/ColumnSettings";
 import { getGlobalSettingsForColumn } from "metabase/visualizations/lib/settings/column";
+import { ModelIndexes } from "metabase/entities/model-indexes";
 import { isSameField } from "metabase-lib/queries/utils/field-ref";
 import { isFK } from "metabase-lib/types/utils/isa";
 
@@ -45,6 +46,7 @@ const propTypes = {
   isLastField: PropTypes.bool.isRequired,
   handleFirstFieldFocus: PropTypes.func.isRequired,
   onFieldMetadataChange: PropTypes.func.isRequired,
+  modelIndexes: PropTypes.array.isRequired,
 };
 
 function getVisibilityTypeName(visibilityType) {
@@ -75,6 +77,8 @@ function getFormFields({ dataset, field }) {
       name: getVisibilityTypeName(type),
       value: type.id,
     }));
+
+  const canIndex = dataset.isSaved() && ModelIndexes.utils.canIndexField(field);
 
   return formFieldValues =>
     [
@@ -114,6 +118,11 @@ function getFormFields({ dataset, field }) {
         type: "radio",
         options: visibilityTypeOptions,
       },
+      canIndex && {
+        name: "should_index",
+        title: t`Surface individual records in search by matching against this column`,
+        type: "boolean",
+      },
     ].filter(Boolean);
 }
 
@@ -142,6 +151,7 @@ function DatasetFieldMetadataSidebar({
   isLastField,
   handleFirstFieldFocus,
   onFieldMetadataChange,
+  modelIndexes,
 }) {
   const displayNameInputRef = useRef();
   const [shouldAnimateFieldChange, setShouldAnimateFieldChange] =
@@ -167,12 +177,13 @@ function DatasetFieldMetadataSidebar({
       semantic_type: field.semantic_type,
       fk_target_field_id: field.fk_target_field_id || null,
       visibility_type: field.visibility_type || "normal",
+      should_index: ModelIndexes.utils.fieldHasIndex(modelIndexes, field),
     };
     if (dataset.isNative()) {
       values.id = field.id;
     }
     return values;
-  }, [field, dataset]);
+  }, [field, dataset, modelIndexes]);
 
   const form = useMemo(
     () => ({
@@ -290,6 +301,18 @@ function DatasetFieldMetadataSidebar({
     [onFieldMetadataChange],
   );
 
+  const onIndexChange = useCallback(
+    async value => {
+      // even though this isn't a real field metadata property, we want to hook into the
+      // question-saving process, so we'll use the same hook and remove this property before calling
+      // the API
+      onFieldMetadataChange({
+        should_index: value,
+      });
+    },
+    [onFieldMetadataChange],
+  );
+
   return (
     <SidebarContent>
       <AnimatableContent
@@ -365,6 +388,7 @@ function DatasetFieldMetadataSidebar({
                     denylist={HIDDEN_COLUMN_FORMATTING_OPTIONS}
                   />
                 )}
+                <FormField name="should_index" onChange={onIndexChange} />
               </SecondaryFormContainer>
             </Form>
           )}

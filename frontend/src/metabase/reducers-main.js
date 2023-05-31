@@ -1,6 +1,6 @@
 // Reducers needed for main application
 
-import { combineReducers } from "redux";
+import { combineReducers } from "@reduxjs/toolkit";
 
 import { PLUGIN_REDUCERS } from "metabase/plugins";
 
@@ -12,7 +12,9 @@ import * as setup from "metabase/setup/reducers";
 
 /* dashboards */
 import dashboard from "metabase/dashboard/reducers";
-import * as home from "metabase/home/reducers";
+
+/* parameters */
+import * as parameters from "metabase/parameters/reducers";
 
 /* query builder */
 import * as qb from "metabase/query_builder/reducers";
@@ -28,6 +30,10 @@ import alert from "metabase/alert/alert";
 
 /* pulses */
 import * as pulse from "metabase/pulse/reducers";
+
+/* metabot */
+import * as metabot from "metabase/metabot/reducers";
+
 import commonReducers from "./reducers-common";
 
 export default {
@@ -36,7 +42,8 @@ export default {
   // main app reducers
   alert,
   dashboard,
-  home: combineReducers(home),
+  parameters: combineReducers(parameters),
+  metabot: combineReducers(metabot),
   pulse: combineReducers(pulse),
   qb: combineReducers(qb),
   reference,
