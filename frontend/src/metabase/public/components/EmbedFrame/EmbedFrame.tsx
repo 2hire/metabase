@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import { useState } from "react";
+import * as React from "react";
 import { withRouter } from "react-router";
 import { connect } from "react-redux";
 import cx from "classnames";
@@ -138,7 +139,7 @@ function EmbedFrame({
               />
             )}
             {hasParameters && (
-              <ParametersWidgetContainer>
+              <ParametersWidgetContainer data-testid="dashboard-parameters-widget-container">
                 <SyncedParametersList
                   className="mt1"
                   question={question}

@@ -1,8 +1,7 @@
-import React from "react";
 import styled from "@emotion/styled";
 import { css } from "@emotion/react";
 
-import Icon from "metabase/components/Icon";
+import { Icon } from "metabase/core/components/Icon";
 import { TreeNode } from "metabase/components/tree/TreeNode";
 import Tooltip from "metabase/core/components/Tooltip";
 import Link from "metabase/core/components/Link";
@@ -10,25 +9,28 @@ import Link from "metabase/core/components/Link";
 import { NAV_SIDEBAR_WIDTH } from "metabase/nav/constants";
 
 import { darken, color, alpha } from "metabase/lib/colors";
+import { shouldForwardNonTransientProp } from "metabase/lib/styling/emotion";
 
-export const SidebarIcon = styled(Icon)<{
+export const SidebarIcon = styled(Icon, {
+  shouldForwardProp: shouldForwardNonTransientProp,
+})<{
   color?: string | null;
   isSelected: boolean;
 }>`
   ${props =>
     !props.color &&
     css`
-      color: ${props.isSelected ? color("brand") : color("brand-light")};
+      color: ${color("brand")};
     `}
 `;
 
 SidebarIcon.defaultProps = {
-  size: 14,
+  size: 16,
 };
 
 export const ExpandToggleButton = styled(TreeNode.ExpandToggleButton)`
   padding: 4px 0 4px 2px;
-  color: ${color("brand-light")};
+  color: ${color("brand")};
 `;
 
 const activeColorCSS = css`

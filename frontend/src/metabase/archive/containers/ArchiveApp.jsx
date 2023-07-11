@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { Component } from "react";
+import { Component } from "react";
 import { connect } from "react-redux";
 import { t } from "ttag";
 import _ from "underscore";
@@ -142,7 +142,7 @@ export default _.compose(
 const BulkActionControls = ({ selected, reload }) => (
   <span>
     <Button
-      ml={1}
+      className="ml1"
       medium
       onClick={async () => {
         try {
@@ -155,7 +155,7 @@ const BulkActionControls = ({ selected, reload }) => (
       }}
     >{t`Unarchive`}</Button>
     <Button
-      ml={1}
+      className="ml1"
       medium
       onClick={async () => {
         try {

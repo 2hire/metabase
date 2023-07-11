@@ -10,7 +10,8 @@
    [metabase.models.permissions-group :as perms-group]
    [metabase.public-settings.premium-features-test
     :as premium-features-test]
-   [metabase.test :as mt]))
+   [metabase.test :as mt]
+   [toucan2.tools.with-temp :as t2.with-temp]))
 
 (def ^:private root-collection (assoc collection/root-collection :name "Root Collection", :namespace "snippets"))
 
@@ -35,7 +36,7 @@
             (test-perms* true)))))
 
     (testing "if EE perms are enabled: "
-      (premium-features-test/with-premium-features #{:enhancements}
+      (premium-features-test/with-premium-features #{:content-management}
         (with-redefs [snippet.perms/has-any-native-permissions? (constantly true)]
           (testing "should be allowed if you have collection perms, native perms for at least one DB, and are not sandboxed"
             (grant-collection-perms!)
@@ -53,9 +54,9 @@
 
 (defn- test-with-root-collection-and-collection [f]
   (mt/with-non-admin-groups-no-root-collection-for-namespace-perms "snippets"
-    (mt/with-temp Collection [collection {:name "Parent Collection", :namespace "snippets"}]
+    (t2.with-temp/with-temp [Collection collection {:name "Parent Collection", :namespace "snippets"}]
       (doseq [coll [root-collection collection]]
-        (mt/with-temp NativeQuerySnippet [snippet {:collection_id (:id coll)}]
+        (t2.with-temp/with-temp [NativeQuerySnippet snippet {:collection_id (:id coll)}]
           (testing (format "in %s\n" (:name coll))
             (f coll snippet)))))))
 

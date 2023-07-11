@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import _ from "underscore";
 import { CreateQueryActionParams } from "metabase/entities/actions";
@@ -72,6 +72,7 @@ function convertActionToQuestionCard(
     result_metadata: [],
     cache_ttl: null,
     last_query_start: null,
+    average_query_time: null,
     archived: false,
   };
 }

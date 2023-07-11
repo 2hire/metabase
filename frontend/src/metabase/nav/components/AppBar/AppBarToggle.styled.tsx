@@ -1,7 +1,8 @@
 import styled from "@emotion/styled";
 import { css } from "@emotion/react";
 import { color } from "metabase/lib/colors";
-import Icon from "metabase/components/Icon";
+import { Icon } from "metabase/core/components/Icon";
+import { shouldForwardNonTransientProp } from "metabase/lib/styling/emotion";
 import { AppBarLeftContainer } from "./AppBarLarge.styled";
 
 interface SidebarButtonProps {
@@ -32,9 +33,12 @@ interface SidebarIconProps {
   isLogoVisible?: boolean;
 }
 
-export const SidebarIcon = styled(Icon)<SidebarIconProps>`
+export const SidebarIcon = styled(Icon, {
+  shouldForwardProp: shouldForwardNonTransientProp,
+})<SidebarIconProps>`
   color: ${color("brand")};
   display: block;
+  transform: translateY(2px) translateX(2px);
 
   ${props =>
     !props.isLogoVisible &&

@@ -1,10 +1,9 @@
 /* eslint-disable react/prop-types */
-import React, { Component } from "react";
+import { Component } from "react";
 import { connect } from "react-redux";
 import { push } from "react-router-redux";
 
 import _ from "underscore";
-import { fetchDatabaseMetadata } from "metabase/redux/metadata";
 import { setErrorPage } from "metabase/redux/app";
 
 import {
@@ -31,7 +30,6 @@ const mapStateToProps = (state, props) => {
 
 const mapDispatchToProps = {
   ...dashboardActions,
-  fetchDatabaseMetadata,
   setErrorPage,
   onChangeLocation: push,
 };

@@ -40,14 +40,27 @@
 (mr/def ::conditions
   [:sequential {:min 1} [:ref ::expression/boolean]])
 
+;;; valid values for the optional `:strategy` key in a join. Note that these are only valid if the current Database
+;;; supports that specific join type; these match 1:1 with the Database `:features`, e.g. a Database that supports
+;;; left joins will support the `:left-join` feature.
+;;;
+;;; When `:strategy` is not specified, `:left-join` is the default strategy.
+(mr/def ::strategy
+  [:enum
+   :left-join
+   :right-join
+   :inner-join
+   :full-join])
+
 (mr/def ::join
   [:map
    [:lib/type    [:= :mbql/join]]
    [:lib/options ::common/options]
    [:stages      [:ref :metabase.lib.schema/stages]]
    [:conditions  ::conditions]
-   [:fields {:optional true} ::fields]
-   [:alias  {:optional true} ::alias]])
+   [:alias       ::alias]
+   [:fields   {:optional true} ::fields]
+   [:strategy {:optional true} ::strategy]])
 
 (mr/def ::joins
   [:and
@@ -59,3 +72,9 @@
       (if-let [aliases (not-empty (filter some? (map :alias joins)))]
         (apply distinct? aliases)
         true))]])
+
+(mr/def ::strategy.option
+  [:map
+   [:lib/type [:= :option/join.strategy]]
+   [:strategy [:ref ::strategy]]
+   [:default {:optional true} :boolean]])

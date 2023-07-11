@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React from "react";
+import { PureComponent } from "react";
 import { connect } from "react-redux";
 import { t } from "ttag";
 import { assoc } from "icepick";
@@ -65,7 +65,7 @@ const mapStateToProps = state => ({
   fontFamily: getFont(state),
 });
 
-class Visualization extends React.PureComponent {
+class Visualization extends PureComponent {
   state = {
     hovered: null,
     clicked: null,
@@ -493,6 +493,7 @@ class Visualization extends React.PureComponent {
                 // NOTE: CardVisualization class used to target ExplicitSize HOC
                 className="CardVisualization flex-full flex-basis-none"
                 isPlaceholder={isPlaceholder}
+                isMobile={isMobile}
                 series={series}
                 settings={settings}
                 card={series[0].card} // convenience for single-series visualizations

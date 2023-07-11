@@ -15,9 +15,24 @@
    [metabase.transforms.materialize :as tf.materialize]
    [metabase.transforms.specs :as tf.specs]
    [metabase.util :as u]
-   [toucan.util.test :as tt]))
+   [schema.core :as s]
+   [toucan2.tools.with-temp :as t2.with-temp]))
 
 (use-fixtures :once (fixtures/initialize :db :web-server :test-users :test-users-personal-collections))
+
+(defn- ordered-cards-schema-check
+  [ordered_cards]
+  (testing "check if all cards in ordered_cards contain the required fields"
+    (doseq [card ordered_cards]
+      (is (schema= {:id                     (s/cond-pre s/Str s/Int)
+                    :dashboard_tab_id       (s/maybe s/Int)
+                    :row                    s/Int
+                    :col                    s/Int
+                    :size_x                 s/Int
+                    :size_y                 s/Int
+                    :visualization_settings (s/maybe (s/named clojure.lang.IPersistentMap "valid map"))
+                    s/Any                   s/Any}
+                   card)))))
 
 (defn- api-call
   ([template args]
@@ -30,7 +45,9 @@
    (mt/with-test-user :rasta
      (with-dashboard-cleanup
        (let [api-endpoint (apply format (str "automagic-dashboards/" template) args)
-             result       (validation-fn (mt/user-http-request :rasta :get 200 api-endpoint))]
+             resp         (mt/user-http-request :rasta :get 200 api-endpoint)
+             _            (ordered-cards-schema-check (:ordered_cards resp))
+             result       (validation-fn resp)]
          (when (and result
                     (try
                       (testing "Endpoint should return 403 if user does not have permissions"
@@ -70,13 +87,13 @@
 
 (deftest metric-xray-test
   (testing "GET /api/automagic-dashboards/metric/:id"
-    (tt/with-temp Metric [{metric-id :id} {:table_id   (mt/id :venues)
-                                           :definition {:query {:aggregation ["count"]}}}]
+    (t2.with-temp/with-temp [Metric {metric-id :id} {:table_id   (mt/id :venues)
+                                                     :definition {:query {:aggregation ["count"]}}}]
       (is (some? (api-call "metric/%s" [metric-id]))))))
 
 (deftest segment-xray-test
-  (tt/with-temp Segment [{segment-id :id} {:table_id   (mt/id :venues)
-                                           :definition {:filter [:> [:field (mt/id :venues :price) nil] 10]}}]
+  (t2.with-temp/with-temp [Segment {segment-id :id} {:table_id   (mt/id :venues)
+                                                     :definition {:filter [:> [:field (mt/id :venues :price) nil] 10]}}]
     (testing "GET /api/automagic-dashboards/segment/:id"
       (is (some? (api-call "segment/%s" [segment-id]))))
 
@@ -111,13 +128,13 @@
                    (is (some? (api-call "question/%s/cell/%s/rule/example/indepth"
                                         [card-id cell-query]
                                         #(revoke-collection-permissions! collection-id))))))]]
-        (tt/with-temp* [Collection [{collection-id :id}]
-                        Card [{card-id :id} {:table_id      (mt/id :venues)
-                                             :collection_id collection-id
-                                             :dataset_query (mt/mbql-query venues
-                                                              {:filter [:> $price 10]})}]]
-                       (perms/grant-collection-readwrite-permissions! (perms-group/all-users) collection-id)
-                       (test-fn collection-id card-id))))))
+        (t2.with-temp/with-temp [Collection {collection-id :id} {}
+                                 Card       {card-id :id}       {:table_id      (mt/id :venues)
+                                                                 :collection_id collection-id
+                                                                 :dataset_query (mt/mbql-query venues
+                                                                                  {:filter [:> $price 10]})}]
+          (perms/grant-collection-readwrite-permissions! (perms-group/all-users) collection-id)
+          (test-fn collection-id card-id))))))
 
 
 (deftest model-xray-test
@@ -141,14 +158,14 @@
                      (is (some? (api-call "model/%s/cell/%s/rule/example/indepth"
                                           [card-id cell-query]
                                           #(revoke-collection-permissions! collection-id))))))]]
-          (tt/with-temp* [Collection [{collection-id :id}]
-                          Card [{card-id :id} {:table_id      (mt/id :venues)
-                                               :collection_id collection-id
-                                               :dataset_query (mt/mbql-query venues
-                                                                {:filter [:> $price 10]})
-                                               :dataset       true}]]
-                         (perms/grant-collection-readwrite-permissions! (perms-group/all-users) collection-id)
-                         (test-fn collection-id card-id)))))))
+          (t2.with-temp/with-temp [Collection {collection-id :id} {}
+                                   Card       {card-id :id}       {:table_id      (mt/id :venues)
+                                                                   :collection_id collection-id
+                                                                   :dataset_query (mt/mbql-query venues
+                                                                                    {:filter [:> $price 10]})
+                                                                   :dataset       true}]
+            (perms/grant-collection-readwrite-permissions! (perms-group/all-users) collection-id)
+            (test-fn collection-id card-id)))))))
 
 (deftest adhoc-query-xray-test
   (let [query (#'magic/encode-base64-json
@@ -174,7 +191,7 @@
      :definition {:filter [:> [:field (mt/id :venues :price) nil] 10]}}))
 
 (deftest comparisons-test
-  (tt/with-temp Segment [{segment-id :id} @segment]
+  (t2.with-temp/with-temp [Segment {segment-id :id} @segment]
     (testing "GET /api/automagic-dashboards/table/:id/compare/segment/:segment-id"
       (is (some?
            (api-call "table/%s/compare/segment/%s"

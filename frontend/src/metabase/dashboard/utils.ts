@@ -7,7 +7,7 @@ import {
   getPermissionErrorMessage,
 } from "metabase/visualizations/lib/errors";
 import { IS_EMBED_PREVIEW } from "metabase/lib/embed";
-import {
+import type {
   Card,
   CardId,
   DashCardId,
@@ -20,6 +20,7 @@ import {
   StructuredDatasetQuery,
   ActionDashboardCard,
 } from "metabase-types/api";
+import type { SelectedTabId } from "metabase-types/store";
 import Question from "metabase-lib/Question";
 import {
   isDateParameter,
@@ -127,6 +128,17 @@ export function getAllDashboardCards(dashboard: Dashboard) {
   return results;
 }
 
+export function getCurrentTabDashboardCards(
+  dashboard: Dashboard,
+  selectedTabId: SelectedTabId,
+) {
+  return getAllDashboardCards(dashboard).filter(
+    ({ dashcard }) =>
+      (dashcard.dashboard_tab_id == null && selectedTabId == null) ||
+      dashcard.dashboard_tab_id === selectedTabId,
+  );
+}
+
 export function hasDatabaseActionsEnabled(database: Database) {
   return database.settings?.["database-enable-actions"] ?? false;
 }
@@ -188,7 +200,7 @@ export function getDashcardResultsError(datasets: Dataset[]) {
   if (isAccessRestricted) {
     return {
       message: getPermissionErrorMessage(),
-      icon: "key",
+      icon: "key" as const,
     };
   }
 
@@ -196,11 +208,11 @@ export function getDashcardResultsError(datasets: Dataset[]) {
   if (errors.length > 0) {
     if (IS_EMBED_PREVIEW) {
       const message = errors[0]?.data || getGenericErrorMessage();
-      return { message, icon: "warning" };
+      return { message, icon: "warning" as const };
     }
     return {
       message: getGenericErrorMessage(),
-      icon: "warning",
+      icon: "warning" as const,
     };
   }
 

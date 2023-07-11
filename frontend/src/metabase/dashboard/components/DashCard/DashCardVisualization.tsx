@@ -1,10 +1,10 @@
-import React, { useCallback } from "react";
+import { useCallback } from "react";
 import cx from "classnames";
 import { t } from "ttag";
 import { connect } from "react-redux";
 import type { LocationDescriptor } from "history";
 
-import { IconProps } from "metabase/components/Icon";
+import { IconName, IconProps } from "metabase/core/components/Icon";
 
 import Visualization from "metabase/visualizations/components/Visualization";
 import WithVizSettingsData from "metabase/dashboard/hoc/WithVizSettingsData";
@@ -32,6 +32,7 @@ import Question from "metabase-lib/Question";
 import type Mode from "metabase-lib/Mode";
 import type Metadata from "metabase-lib/metadata/Metadata";
 
+import InternalQuery from "metabase-lib/queries/InternalQuery";
 import { CardSlownessStatus, DashCardOnChangeCardAndRunHandler } from "./types";
 import ClickBehaviorSidebarOverlay from "./ClickBehaviorSidebarOverlay";
 import DashCardMenu from "./DashCardMenu";
@@ -40,6 +41,7 @@ import {
   VirtualDashCardOverlayRoot,
   VirtualDashCardOverlayText,
 } from "./DashCard.styled";
+import { shouldShowParameterMapper } from "./utils";
 
 interface DashCardVisualizationProps {
   dashboard: Dashboard;
@@ -73,7 +75,7 @@ interface DashCardVisualizationProps {
   isNightMode?: boolean;
   isPublic?: boolean;
 
-  error?: { message?: string; icon?: IconProps["name"] };
+  error?: { message?: string; icon?: IconName };
   headerIcon?: IconProps;
 
   onUpdateVisualizationSettings: (settings: VisualizationSettings) => void;
@@ -137,6 +139,7 @@ function DashCardVisualization({
             link: t`Link`,
             action: t`Action Button`,
             text: t`Text Card`,
+            heading: t`Heading Card`,
           }[virtualDashcardType] ??
           t`This card does not support click mappings`;
 
@@ -158,7 +161,7 @@ function DashCardVisualization({
       );
     }
 
-    if (isEditingParameter) {
+    if (shouldShowParameterMapper({ dashcard, isEditingParameter })) {
       return (
         <DashCardParameterMapper dashcard={dashcard} isMobile={isMobile} />
       );
@@ -180,13 +183,14 @@ function DashCardVisualization({
     const question = new Question(dashcard.card, metadata);
     const mainSeries = series[0] as unknown as Dataset;
 
+    const isInternalQuery = question.query() instanceof InternalQuery;
     const shouldShowDownloadWidget =
       isEmbed ||
       (!isPublic &&
         !isEditing &&
         DashCardMenu.shouldRender({ question, result: mainSeries }));
 
-    if (!shouldShowDownloadWidget) {
+    if (isInternalQuery || !shouldShowDownloadWidget) {
       return null;
     }
 

@@ -1,5 +1,3 @@
-/* eslint-disable react/prop-types */
-import React from "react";
 import cx from "classnames";
 
 import Filter from "metabase-lib/queries/structured/Filter";
@@ -45,7 +43,7 @@ export default function FilterPopoverHeader({
 
   return showHeader ? (
     <div
-      className={cx(className, "text-medium p1 mb1 border-bottom", {
+      className={cx(className, "text-medium p1", {
         "flex align-center": !showOperatorSelectorOnOwnRow,
       })}
     >

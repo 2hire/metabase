@@ -1,4 +1,4 @@
-import React, { Component } from "react";
+import { Component } from "react";
 import PropTypes from "prop-types";
 import { t } from "ttag";
 import { getIn } from "icepick";
@@ -27,7 +27,6 @@ class AddSeriesModal extends Component {
     dashcard: PropTypes.object.isRequired,
     dashcardData: PropTypes.object.isRequired,
     fetchCardData: PropTypes.func.isRequired,
-    fetchDatabaseMetadata: PropTypes.func.isRequired,
     setDashCardAttributes: PropTypes.func.isRequired,
     loadMetadataForQueries: PropTypes.func.isRequired,
     onClose: PropTypes.func.isRequired,

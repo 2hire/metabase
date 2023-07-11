@@ -1,4 +1,3 @@
-import React from "react";
 import { connect } from "react-redux";
 import { useAsyncFn } from "react-use";
 import { t } from "ttag";
@@ -99,7 +98,6 @@ QueryDownloadWidget.shouldRender = ({
   isResultDirty,
 }: QueryDownloadWidgetOpts) => {
   return (
-    !isResultDirty &&
     result &&
     !result.error &&
     PLUGIN_FEATURE_LEVEL_PERMISSIONS.canDownloadResults(result)

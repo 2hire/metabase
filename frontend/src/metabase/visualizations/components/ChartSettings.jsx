@@ -1,5 +1,7 @@
 /* eslint-disable react/prop-types */
-import React, { Component } from "react";
+import { Component } from "react";
+
+import * as React from "react";
 import { assocIn } from "icepick";
 import _ from "underscore";
 import { t } from "ttag";
@@ -153,13 +155,14 @@ class ChartSettings extends Component {
     if (this.props.widgets) {
       return this.props.widgets;
     } else {
-      const { isDashboard } = this.props;
+      const { isDashboard, dashboard } = this.props;
       const transformedSeries = this._getTransformedSeries();
 
       return getSettingsWidgetsForSeries(
         transformedSeries,
         this.handleChangeSettings,
         isDashboard,
+        { dashboardId: dashboard?.id },
       );
     }
   }
@@ -273,7 +276,7 @@ class ChartSettings extends Component {
       dashcard,
       isDashboard,
     } = this.props;
-    const { currentWidget, popoverRef } = this.state;
+    const { popoverRef } = this.state;
 
     const settings = this._getSettings();
     const widgets = this._getWidgets();
@@ -409,9 +412,6 @@ class ChartSettings extends Component {
           </ChartSettingsPreview>
         )}
         <ChartSettingsWidgetPopover
-          currentWidgetKey={
-            currentWidget?.props?.initialKey || currentWidget?.props?.seriesKey
-          }
           anchor={popoverRef}
           widgets={[this.getFormattingWidget(), this.getStyleWidget()].filter(
             widget => !!widget,

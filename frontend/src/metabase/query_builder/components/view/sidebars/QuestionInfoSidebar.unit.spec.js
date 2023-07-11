@@ -1,4 +1,3 @@
-import React from "react";
 import { Route } from "react-router";
 import fetchMock from "fetch-mock";
 import userEvent from "@testing-library/user-event";
@@ -19,8 +18,10 @@ import {
   createMockModerationReview,
   createMockUser,
 } from "metabase-types/api/mocks";
+
 import { createSampleDatabase } from "metabase-types/api/mocks/presets";
 import { createMockState } from "metabase-types/store/mocks";
+import * as ML_Urls from "metabase-lib/urls";
 
 import { QuestionInfoSidebar } from "./QuestionInfoSidebar";
 
@@ -123,7 +124,9 @@ describe("QuestionInfoSidebar", () => {
       });
 
       it("is shown if caching is enabled", async () => {
-        await setup({ card: getQuestionCard({ cache_ttl: 2 }) });
+        await setup({
+          card: getQuestionCard({ can_write: true, cache_ttl: 2 }),
+        });
         expect(screen.getByText("Cache Configuration")).toBeInTheDocument();
       });
 
@@ -159,7 +162,7 @@ describe("QuestionInfoSidebar", () => {
       const link = screen.getByText("Model details");
 
       expect(link).toBeInTheDocument();
-      expect(link).toHaveAttribute("href", `${model.getUrl()}/detail`);
+      expect(link).toHaveAttribute("href", `${ML_Urls.getUrl(model)}/detail`);
     });
 
     it("isn't shown for questions", async () => {

@@ -1,9 +1,9 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { getIn } from "icepick";
 import type { LocationDescriptor } from "history";
 
 import { useMount } from "react-use";
-import { IconProps } from "metabase/components/Icon";
+import { IconProps } from "metabase/core/components/Icon";
 
 import Utils from "metabase/lib/utils";
 
@@ -50,7 +50,7 @@ function preventDragging(event: React.SyntheticEvent) {
   event.stopPropagation();
 }
 
-interface DashCardProps {
+export interface DashCardProps {
   dashboard: Dashboard;
   dashcard: DashboardOrderedCard & { justAdded?: boolean };
   gridItemWidth: number;
@@ -189,6 +189,20 @@ function DashCard({
     [dashcard],
   );
 
+  const shouldForceHiddenBackground = useMemo(() => {
+    if (!isEditing) {
+      return false;
+    }
+
+    const isHeadingCard = mainCard.display === "heading";
+    const isTextCard = mainCard.display === "text";
+
+    return (
+      (isHeadingCard || isTextCard) &&
+      mainCard.visualization_settings["dashcard.background"] === false
+    );
+  }, [isEditing, mainCard]);
+
   const hasHiddenBackground = useMemo(() => {
     if (isEditing) {
       return false;
@@ -283,6 +297,7 @@ function DashCard({
         data-testid="dashcard"
         className="Card rounded flex flex-column hover-parent hover--visibility"
         hasHiddenBackground={hasHiddenBackground}
+        shouldForceHiddenBackground={shouldForceHiddenBackground}
         isNightMode={isNightMode}
         isUsuallySlow={isSlow === "usually-slow"}
         ref={cardRootRef}

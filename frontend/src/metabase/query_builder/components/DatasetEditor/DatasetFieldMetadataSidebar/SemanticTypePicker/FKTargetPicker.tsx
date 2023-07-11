@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { connect } from "react-redux";
 import { t } from "ttag";
 import _ from "underscore";
@@ -93,6 +93,9 @@ function FKTargetPicker({
       onChange={onChange}
       searchable
       searchProp={SEARCH_PROPERTIES}
+      buttonProps={{
+        "aria-label": t`Foreign key target`,
+      }}
       optionValueFn={getOptionValue}
       optionNameFn={getFieldName}
       optionIconFn={getOptionIcon}
