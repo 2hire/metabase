@@ -7,11 +7,13 @@
   these drivers define additional multimethods that child drivers should implement; see [[metabase.driver.sql]] and
   [[metabase.driver.sql-jdbc]] for more details."
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [java-time :as t]
    [metabase.driver.impl :as driver.impl]
    [metabase.models.setting :as setting :refer [defsetting]]
    [metabase.plugins.classloader :as classloader]
+   [metabase.util :as u]
    [metabase.util.i18n :refer [deferred-tru trs tru]]
    [metabase.util.log :as log]
    [potemkin :as p]
@@ -259,6 +261,20 @@
   [_]
   nil)
 
+(defn dispatch-on-initialized-driver-safe-keys
+  "Dispatch on initialized driver, except checks for `classname`,
+  `subprotocol`, `connection-uri` in the details map in order to
+  prevent a mismatch in spec type vs driver."
+  [driver details-map]
+  (let [invalid-keys #{"classname" "subprotocol" "connection-uri"}
+        ks           (->> details-map keys
+                          (map name)
+                          (map u/lower-case-en) set)]
+    (when (seq (set/intersection ks invalid-keys))
+      (throw (ex-info "Cannot specify subname, protocol, or connection-uri in details map"
+                      {:invalid-keys (set/intersection ks invalid-keys)})))
+    (dispatch-on-initialized-driver driver)))
+
 (defmulti can-connect?
   "Check whether we can connect to a `Database` with `details-map` and perform a simple query. For example, a SQL
   database might try running a query like `SELECT 1;`. This function should return truthy if a connection to the DB
@@ -266,7 +282,7 @@
   connection cannot be made. Throw an `ex-info` containing a truthy `::can-connect-message?` in `ex-data`
   in order to suppress logging expected driver validation messages during setup."
   {:arglists '([driver details])}
-  dispatch-on-initialized-driver
+  dispatch-on-initialized-driver-safe-keys
   :hierarchy #'hierarchy)
 
 (defmulti dbms-version
@@ -508,6 +524,9 @@
     ;; Does the driver support connection impersonation (i.e. overriding the role used for individual queries)?
     :connection-impersonation
 
+    ;; Does the driver require specifying the default connection role for connection impersonation to work?
+    :connection-impersonation-requires-role
+
     ;; Does the driver require specifying a collection (table) for native queries? (mongo)
     :native-requires-specified-collection})
 
@@ -650,6 +669,9 @@
   query)
 
 ;; TODO - we should just have some sort of `core.async` channel to handle DB update notifications instead
+;;
+;; TODO -- shouldn't this be called `notify-database-updated!`, since the expectation is that it is done for side
+;; effects?
 (defmulti notify-database-updated
   "Notify the driver that the attributes of a `database` have changed, or that `database was deleted. This is
   specifically relevant in the event that the driver was doing some caching or connection pooling; the driver should

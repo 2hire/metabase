@@ -2,7 +2,7 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer :all]
-   [metabase.mbql.schema :as mbql.s]
+   [metabase.lib.schema.id :as lib.schema.id]
    [metabase.models :refer [Card Collection Dimension Field]]
    [metabase.models.permissions :as perms]
    [metabase.models.permissions-group :as perms-group]
@@ -11,6 +11,7 @@
    [metabase.sync.analyze.query-results :as qr]
    [metabase.test :as mt]
    [metabase.util :as u]
+   #_{:clj-kondo/ignore [:deprecated-namespace]}
    [metabase.util.schema :as su]
    [schema.core :as s]
    [toucan2.core :as t2]
@@ -97,7 +98,7 @@
   (testing "check that using a Card as your source doesn't overwrite the results metadata..."
     (t2.with-temp/with-temp [Card card {:dataset_query   (mt/native-query {:query "SELECT * FROM VENUES"})
                                         :result_metadata [{:name "NAME", :display_name "Name", :base_type :type/Text}]}]
-      (let [result (qp/process-userland-query {:database mbql.s/saved-questions-virtual-database-id
+      (let [result (qp/process-userland-query {:database lib.schema.id/saved-questions-virtual-database-id
                                                :type     :query
                                                :query    {:source-table (str "card__" (u/the-id card))}})]
         (is (partial= {:status :completed}
@@ -106,12 +107,12 @@
              (card-metadata card)))))
 
   (testing "...even when running via the API endpoint"
-    (mt/with-temp* [Collection [collection]
-                    Card       [card {:collection_id   (u/the-id collection)
-                                      :dataset_query   (mt/native-query {:query "SELECT * FROM VENUES"})
-                                      :result_metadata [{:name "NAME", :display_name "Name", :base_type :type/Text}]}]]
+    (mt/with-temp [Collection collection {}
+                   Card       card {:collection_id   (u/the-id collection)
+                                    :dataset_query   (mt/native-query {:query "SELECT * FROM VENUES"})
+                                    :result_metadata [{:name "NAME", :display_name "Name", :base_type :type/Text}]}]
       (perms/grant-collection-read-permissions! (perms-group/all-users) collection)
-      (mt/user-http-request :rasta :post 202 "dataset" {:database mbql.s/saved-questions-virtual-database-id
+      (mt/user-http-request :rasta :post 202 "dataset" {:database lib.schema.id/saved-questions-virtual-database-id
                                                         :type     :query
                                                         :query    {:source-table (str "card__" (u/the-id card))}})
       (is (= [{:name "NAME", :display_name "Name", :base_type :type/Text}]
@@ -181,33 +182,33 @@
                    :breakout     [[:field (mt/id :checkins :date) {:temporal-unit :year}]]}
         :info     {:card-id    (u/the-id card)
                    :query-hash (qp.util/query-hash {})}})
-      (is (= [{:base_type    :type/Date
-               :effective_type    :type/Date
-               :visibility_type :normal
-               :coercion_strategy nil
-               :display_name "Date"
-               :name         "DATE"
-               :unit         :year
-               :settings     nil
-               :description  nil
-               :semantic_type nil
-               :fingerprint  {:global {:distinct-count 618 :nil% 0.0}
-                              :type   {:type/DateTime {:earliest "2013-01-03"
-                                                       :latest   "2015-12-29"}}}
-               :id           (mt/id :checkins :date)
-               :field_ref    [:field (mt/id :checkins :date) {:temporal-unit :year}]}
-              {:base_type    :type/BigInteger
-               :effective_type :type/BigInteger
-               :display_name "Count"
-               :name         "count"
-               :semantic_type :type/Quantity
-               :fingerprint  {:global {:distinct-count 3
-                                       :nil%           0.0},
-                              :type   {:type/Number {:min 235.0, :max 498.0, :avg 333.33 :q1 243.0, :q3 440.25, :sd 143.5}}}
-               :field_ref    [:aggregation 0]}]
-             (-> card
-                 card-metadata
-                 round-to-2-decimals))))))
+      (is (=? [{:base_type    :type/Date
+                :effective_type    :type/Date
+                :visibility_type :normal
+                :coercion_strategy nil
+                :display_name "Date"
+                :name         "DATE"
+                :unit         :year
+                :settings     nil
+                :description  nil
+                :semantic_type nil
+                :fingerprint  {:global {:distinct-count 618 :nil% 0.0}
+                               :type   {:type/DateTime {:earliest "2013-01-03"
+                                                        :latest   "2015-12-29"}}}
+                :id           (mt/id :checkins :date)
+                :field_ref    [:field (mt/id :checkins :date) {:temporal-unit :year}]}
+               {:base_type    :type/BigInteger
+                :effective_type :type/BigInteger
+                :display_name "Count"
+                :name         "count"
+                :semantic_type :type/Quantity
+                :fingerprint  {:global {:distinct-count 3
+                                        :nil%           0.0},
+                               :type   {:type/Number {:min 235.0, :max 498.0, :avg 333.33 :q1 243.0, :q3 440.25, :sd 143.5}}}
+                :field_ref    [:aggregation 0]}]
+              (-> card
+                  card-metadata
+                  round-to-2-decimals))))))
 
 (defn- results-metadata [query]
   (-> (qp/process-query query) :data :results_metadata :columns))

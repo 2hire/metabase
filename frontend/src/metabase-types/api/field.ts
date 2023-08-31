@@ -1,6 +1,6 @@
-import { RowValue } from "./dataset";
-import { FieldReference } from "./query";
-import { Table, TableId } from "./table";
+import type { RowValue } from "./dataset";
+import type { FieldReference } from "./query";
+import type { Table, TableId } from "./table";
 
 export type FieldId = number;
 
@@ -50,7 +50,9 @@ export type FieldVisibilityType =
   | "sensitive";
 
 type HumanReadableFieldValue = string;
-export type FieldValue = [RowValue] | [RowValue, HumanReadableFieldValue];
+type RemappedFieldValue = [RowValue, HumanReadableFieldValue];
+type NotRemappedFieldValue = [RowValue];
+export type FieldValue = NotRemappedFieldValue | RemappedFieldValue;
 
 export type FieldValuesType = "list" | "search" | "none";
 
@@ -118,7 +120,7 @@ export interface Field {
   updated_at: string;
 }
 
-export interface FieldValues {
+export interface FieldValuesResult {
   field_id: FieldId;
   values: FieldValue[];
   has_more_values: boolean;

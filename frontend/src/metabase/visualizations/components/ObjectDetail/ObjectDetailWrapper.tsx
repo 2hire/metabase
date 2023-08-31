@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ObjectDetailProps } from "metabase/visualizations/components/ObjectDetail/types";
+import type { ObjectDetailProps } from "metabase/visualizations/components/ObjectDetail/types";
 import {
   PaginationFooter,
   RootModal,
@@ -50,7 +50,7 @@ export function ObjectDetailWrapper({
         data={data}
         question={question}
         showHeader={props.settings["detail.showHeader"]}
-        showActions={false}
+        showControls={false}
         showRelations={false}
         closeObjectDetail={closeObjectDetail}
         isDataApp={isDataApp}

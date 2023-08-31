@@ -8,6 +8,7 @@
    [metabase.driver.sql.query-processor :as sql.qp]
    [metabase.driver.sql.query-processor-test-util :as sql.qp-test-util]
    [metabase.driver.sql.query-processor.deprecated]
+   [metabase.lib.test-metadata :as meta]
    [metabase.models.field :refer [Field]]
    [metabase.models.setting :as setting]
    [metabase.query-processor :as qp]
@@ -16,9 +17,9 @@
    [metabase.query-processor.util.add-alias-info :as add]
    [metabase.test :as mt]
    [metabase.test.data.env :as tx.env]
+   #_{:clj-kondo/ignore [:deprecated-namespace]}
    [metabase.util.honeysql-extensions :as hx]
-   [schema.core :as s]
-   [toucan2.core :as t2]))
+   [schema.core :as s]))
 
 (comment metabase.driver.sql.query-processor.deprecated/keep-me)
 
@@ -64,7 +65,7 @@
              :breakout     2})))))
 
 (defn- mbql->native [query]
-  (mt/with-everything-store
+  (qp.store/with-metadata-provider (mt/id)
     (driver/with-driver :h2
       (-> (sql.qp/mbql->native :h2 (qp/preprocess query))
           :query
@@ -223,30 +224,7 @@
 
 (defn- compile-join [driver]
   (driver/with-driver driver
-    (qp.store/with-store
-      (qp.store/store-database! (t2/instance :model/Database
-                                             {:id       1
-                                              :name     "test-data"
-                                              :engine   driver
-                                              :details  {}
-                                              :settings {}}))
-      (qp.store/store-table!    (t2/instance :model/Table
-                                             {:id     1
-                                              :db_id  1
-                                              :schema "public"
-                                              :name   "checkins"}))
-      (qp.store/store-field!    (t2/instance :model/Field
-                                             {:id            1
-                                              :table_id      1
-                                              :name          "id"
-                                              :description   nil
-                                              :database_type "integer"
-                                              :semantic_type nil
-                                              :nfc_path      nil
-                                              :parent_id     nil
-                                              :display_name  "ID"
-                                              :fingerprint   nil
-                                              :base_type     :type/Integer}))
+    (qp.store/with-metadata-provider meta/metadata-provider
       (sql.qp/with-driver-honey-sql-version driver
         (let [join (sql.qp/join->honeysql
                     driver
@@ -254,8 +232,8 @@
                      :alias        "card"
                      :strategy     :left-join
                      :condition    [:=
-                                    [:field 1 {::add/source-table 1
-                                               ::add/source-alias "VENUE_ID"}]
+                                    [:field (meta/id :checkins :id) {::add/source-table (meta/id :checkins)
+                                                                     ::add/source-alias "VENUE_ID"}]
                                     [:field "id" {:base-type         :type/Text
                                                   ::add/source-table "card"
                                                   ::add/source-alias "id"}]]})]
@@ -265,9 +243,9 @@
   (testing "make sure the generated HoneySQL will compile to the correct SQL"
     (are [driver expected] (= [expected]
                               (compile-join driver))
-      :sql      "INNER JOIN (SELECT * FROM VENUES) \"card\" ON \"public\".\"checkins\".\"VENUE_ID\" = \"card\".\"id\""
-      :h2       "INNER JOIN (SELECT * FROM VENUES) AS \"card\" ON \"public\".\"checkins\".\"VENUE_ID\" = \"card\".\"id\""
-      :postgres "INNER JOIN (SELECT * FROM VENUES) AS \"card\" ON \"public\".\"checkins\".\"VENUE_ID\" = \"card\".\"id\"")))
+      :sql      "INNER JOIN (SELECT * FROM VENUES) \"card\" ON \"PUBLIC\".\"CHECKINS\".\"VENUE_ID\" = \"card\".\"id\""
+      :h2       "INNER JOIN (SELECT * FROM VENUES) AS \"card\" ON \"PUBLIC\".\"CHECKINS\".\"VENUE_ID\" = \"card\".\"id\""
+      :postgres "INNER JOIN (SELECT * FROM VENUES) AS \"card\" ON \"PUBLIC\".\"CHECKINS\".\"VENUE_ID\" = \"card\".\"id\"")))
 
 (deftest adjust-start-of-week-test
   (driver/with-driver :h2
@@ -1085,7 +1063,7 @@
                      :thursday
                      :friday
                      :saturday]]
-          (metabase.test/with-temporary-setting-values [start-of-week day]
+          (mt/with-temporary-setting-values [start-of-week day]
             (sql.qp/with-driver-honey-sql-version driver/*driver*
               (let [sql-args (-> (sql.qp/format-honeysql driver/*driver* (sql.qp/date driver/*driver* :day-of-week :x))
                                  vec
@@ -1111,3 +1089,44 @@
                                     :breakout    [:binning-strategy $quantity :num-bins 10]}))
                    (mdb.query/format-sql :h2)
                    str/split-lines)))))))
+
+(deftest ^:parallel make-nestable-sql-test
+  (testing "Native sql query should be modified to be usable in subselect"
+    (are [raw nestable] (= nestable (sql.qp/make-nestable-sql raw))
+      "SELECT ';' `x`; ; "
+      "(SELECT ';' `x`)"
+
+      "SELECT * FROM table\n-- remark"
+      "(SELECT * FROM table\n-- remark\n)"
+
+      ;; Comment, semicolon, comment, comment.
+      "SELECT * from people -- people -- cool table\n ; -- cool query\n -- some notes on cool query"
+      "(SELECT * from people -- people -- cool table\n)"
+
+      ;; String containing semicolon, double dash and newline followed by NO _comment or semicolon or end of input_.
+      "SELECT 'string with \n ; -- ends \n on new line';"
+      "(SELECT 'string with \n ; -- ends \n on new line')"
+
+      ;; String containing semicolon followed by double dash followed by THE _comment or semicolon or end of input_.
+      ;; TODO: Enable when better sql parsing solution is found in the [[sql.qp/make-nestable-sql]]].
+      #_#_
+      "SELECT 'string with \n ; -- ending on the same line';"
+      "(SELECT 'string with \n ; -- ending on the same line')"
+      #_#_
+      "SELECT 'string with \n ; -- ending on the same line';\n-- comment"
+      "(SELECT 'string with \n ; -- ending on the same line')"
+
+      ;; String containing just `--` without `;` works
+      "SELECT 'string with \n -- ending on the same line';"
+      "(SELECT 'string with \n -- ending on the same line'\n)"
+
+      ;; String with just `;`
+      "SELECT 'string with ; ending on the same line';"
+      "(SELECT 'string with ; ending on the same line')"
+
+      ;; Semicolon after comment after semicolon
+      "SELECT ';';\n
+      --c1\n
+      ; --c2\n
+      -- c3"
+      "(SELECT ';')")))

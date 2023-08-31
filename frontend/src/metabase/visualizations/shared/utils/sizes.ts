@@ -1,6 +1,6 @@
 import _ from "underscore";
 import { DEFAULT_CARD_SIZE, GRID_WIDTH } from "metabase/lib/dashboard_grid";
-import { CardDisplayType } from "metabase-types/api";
+import type { CardDisplayType } from "metabase-types/api";
 
 type VisualizationSize = { width: number; height: number };
 const VISUALIZATION_SIZES: {
@@ -116,3 +116,13 @@ export const getMinSize = (
 export const getDefaultSize = (
   visualizationType: CardDisplayType,
 ): VisualizationSize => getSize(visualizationType, "default");
+
+export const MOBILE_HEIGHT_BY_DISPLAY_TYPE = {
+  action: 1,
+  link: 1,
+  text: 2,
+  heading: 2,
+  scalar: 4,
+};
+
+export const MOBILE_DEFAULT_CARD_HEIGHT = 6;

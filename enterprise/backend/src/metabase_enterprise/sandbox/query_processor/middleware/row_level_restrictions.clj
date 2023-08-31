@@ -11,10 +11,10 @@
     :refer [GroupTableAccessPolicy]]
    [metabase.api.common :as api :refer [*current-user* *current-user-id*]]
    [metabase.db.connection :as mdb.connection]
+   [metabase.lib.metadata.protocols :as lib.metadata.protocols]
    [metabase.mbql.schema :as mbql.s]
    [metabase.mbql.util :as mbql.u]
    [metabase.models.card :refer [Card]]
-   [metabase.models.field :refer [Field]]
    [metabase.models.permissions :as perms]
    [metabase.models.permissions-group-membership
     :refer [PermissionsGroupMembership]]
@@ -28,8 +28,12 @@
    [metabase.util :as u]
    [metabase.util.i18n :refer [trs tru]]
    [metabase.util.log :as log]
+   [metabase.util.malli :as mu]
+   [metabase.util.malli.schema :as ms]
+   #_{:clj-kondo/ignore [:deprecated-namespace]}
    [metabase.util.schema :as su]
    [schema.core :as s]
+   #_{:clj-kondo/ignore [:discouraged-namespace]}
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
@@ -41,13 +45,10 @@
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
 (defn- all-table-ids [m]
-  (set
-   (reduce
-    concat
-    (mbql.u/match m
-      (_ :guard (every-pred map? :source-table (complement ::gtap?)))
-      (let [recursive-ids (all-table-ids (dissoc &match :source-table))]
-        (cons (:source-table &match) recursive-ids))))))
+  (into #{} cat (mbql.u/match m
+                  (_ :guard (every-pred map? :source-table (complement ::gtap?)))
+                  (let [recursive-ids (all-table-ids (dissoc &match :source-table))]
+                    (cons (:source-table &match) recursive-ids)))))
 
 (defn- query->all-table-ids [query]
   (let [ids (all-table-ids query)]
@@ -91,14 +92,12 @@
 ;;; |                                                Applying a GTAP                                                 |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
-(s/defn ^:private target-field->base-type :- (s/maybe su/FieldType)
+(mu/defn ^:private target-field->base-type :- [:maybe ms/FieldType]
   "If the `:target` of a parameter contains a `:field` clause, return the base type corresponding to the Field it
   references. Otherwise returns `nil`."
   [[_ target-field-clause]]
   (when-let [field-id (mbql.u/match-one target-field-clause [:field (field-id :guard integer?) _] field-id)]
-    ;; TODO -- we should be using the QP store for this. But when trying to change this I ran into "QP Store is not
-    ;; initialized" errors. We should figure out why that's the case and then fix this
-    (t2/select-one-fn :base_type Field :id field-id)))
+    (:base-type (lib.metadata.protocols/field (qp.store/metadata-provider) field-id))))
 
 (defn- attr-value->param-value
   "Take an `attr-value` with a desired `target-type` and coerce to that type if need be. If not type is given or it's
@@ -108,10 +107,10 @@
     (cond
       ;; If the attr-value is a string and the target type is integer, parse it as a long
       (and attr-string? (isa? target-type :type/Integer))
-      (Long/parseLong attr-value)
+      (parse-long attr-value)
       ;; If the attr-value is a string and the target type is float, parse it as a double
       (and attr-string? (isa? target-type :type/Float))
-      (Double/parseDouble attr-value)
+      (parse-double attr-value)
       ;; No need to parse it if the type isn't numeric or if it's already a number
       :else
       attr-value)))
@@ -130,7 +129,7 @@
   (mapv (partial attr-remapping->parameter (:login_attributes @*current-user*))
         attribute-remappings))
 
-(s/defn ^:private preprocess-source-query :- mbql.s/SourceQuery
+(mu/defn ^:private preprocess-source-query :- mbql.s/SourceQuery
   [source-query :- mbql.s/SourceQuery]
   (try
     (let [query        {:database (:id (qp.store/database))
@@ -233,11 +232,11 @@
     (assoc source-query :source-metadata metadata)))
 
 
-(s/defn ^:private gtap->source :- {:source-query                     s/Any
-                                   (s/optional-key :source-metadata) [mbql.s/SourceQueryMetadata]
-                                   s/Keyword                         s/Any}
+(mu/defn ^:private gtap->source :- [:map
+                                    [:source-query :any]
+                                    [:source-metadata {:optional true} [:sequential mbql.s/SourceQueryMetadata]]]
   "Get the source query associated with a `gtap`."
-  [{card-id :card_id, table-id :table_id, :as gtap} :- su/Map]
+  [{card-id :card_id, table-id :table_id, :as gtap} :- :map]
   (-> ((if card-id
          card-gtap->source
          table-gtap->source) gtap)
@@ -252,13 +251,13 @@
   (->>
    (for [target-field-clause (vals attribute-remappings)]
      (mbql.u/match-one target-field-clause
-                       [:field (field-id :guard integer?) _]
-                       (t2/select-one-fn :table_id Field :id field-id)))
+       [:field (field-id :guard integer?) _]
+       (:table-id (lib.metadata.protocols/field (qp.store/metadata-provider) field-id))))
    (cons table-id)
    (remove nil?)
    set))
 
-(s/defn ^:private sandbox->perms-set :- #{perms/PathSchema}
+(mu/defn ^:private sandbox->perms-set :- [:set perms/PathSchema]
   "Calculate the set of permissions needed to run the query associated with a sandbox; this set of permissions is excluded
   during the normal QP perms check.
 
@@ -271,7 +270,8 @@
   [{card-id :card_id :as sandbox}]
   (if card-id
     (qp.store/cached card-id
-      (query-perms/perms-set (t2/select-one-fn :dataset_query Card :id card-id), :throw-exceptions? true))
+      (query-perms/perms-set (:dataset-query (lib.metadata.protocols/card (qp.store/metadata-provider) card-id))
+                             :throw-exceptions? true))
     (set (map perms/table-query-path (sandbox->table-ids sandbox)))))
 
 (defn- sandboxes->perms-set [sandboxes]

@@ -17,6 +17,7 @@
    [metabase.util :as u]
    [metabase.util.i18n :refer [trs]]
    [metabase.util.log :as log]
+   #_{:clj-kondo/ignore [:deprecated-namespace]}
    [metabase.util.schema :as su]
    [redux.core :as redux]
    [schema.core :as s]
@@ -102,7 +103,7 @@
   [base-types :- #{su/FieldType}]
   (->> (for [base-type base-types]
          (cons base-type (descendants base-type)))
-       (reduce set/union)
+       (reduce set/union #{})
        (map u/qualified-name)
        set))
 
@@ -204,9 +205,7 @@
     tables :- [i/TableInstance]
     log-progress-fn
     continue?]
-   (qp.store/with-store
-     ;; store is bound so DB timezone can be used in date coercion logic
-     (qp.store/store-database! database)
+   (qp.store/with-metadata-provider (u/the-id database)
      (reduce (fn [acc table]
                (log-progress-fn (if *refingerprint?* "refingerprint-fields" "fingerprint-fields") table)
                (let [results (if (= :googleanalytics (:engine database))
