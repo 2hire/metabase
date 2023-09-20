@@ -536,6 +536,8 @@
         (log/warn (trs "Slack only supports up to 10 attachments per message. Sending in multiple istances")))
       ;; Sending multiple messages in batches of 10 attachments
       (doseq [attachments-batch (partition-all 10 attachments)]
+        ;; Log the number of attachments in each batch
+        (log/debug (trs "Sending Slack message with {0} attachments" (count attachments-batch)))
         (slack/post-chat-message! channel-id message attachments-batch))
       (catch ExceptionInfo e
         ;; Token errors have already been logged and we should not retry.
