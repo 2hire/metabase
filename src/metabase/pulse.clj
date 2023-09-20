@@ -531,14 +531,8 @@
   [{:keys [channel-id message attachments]}]
   (let [attachments (create-and-upload-slack-attachments! attachments)]
     (try
-      ;; Check if attachments are too many for Slack to handle
-      (when (> (count attachments) 10)
-        (log/warn (trs "Slack only supports up to 10 attachments per message. Sending in multiple istances")))
-      ;; Sending multiple messages in batches of 10 attachments
-      (doseq [attachments-batch (partition-all 10 attachments)]
-        ;; Log the number of attachments in each batch
-        (log/error "Test" (trs "Sending Slack message with {0} attachments" (count attachments-batch)))
-        (slack/post-chat-message! channel-id message attachments-batch))
+      (log/error "TestNonLoop" (trs "Sending Slack message with {0} attachments" (count attachments)))
+      (slack/post-chat-message! channel-id message attachments)
       (catch ExceptionInfo e
         ;; Token errors have already been logged and we should not retry.
         (when-not (contains? (:errors (ex-data e)) :slack-token)
