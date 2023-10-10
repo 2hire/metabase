@@ -306,7 +306,14 @@
                           {:type   "section"
                            :fields filter-fields})]
     (if filter-section
-      {:blocks [header-section (split-at 10 filter-section) creator-section]}
+      {:blocks
+       ;; split filter-fields in groups of ten and create a section for each group, insert those sections in between header and creator section
+        (->> (partition-all 10 filter-fields)
+              (map (fn [fields] {:type   "section"
+                                :fields fields}))
+              (interpose creator-section)
+              (concat [header-section])
+              (into []))}
       {:blocks [header-section creator-section]})))
 
 (defn- slack-dashboard-footer
