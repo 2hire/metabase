@@ -1,7 +1,7 @@
 (ns metabase.pulse
   "Public API for sending Pulses."
   (:require
-   [clojure.data.json :as json]
+   [cheshire.core :as json]
    [clojure.string :as str]
    [metabase.api.common :as api]
    [metabase.config :as config]
