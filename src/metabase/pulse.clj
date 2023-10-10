@@ -539,13 +539,10 @@
   [{:keys [channel-id message attachments]}]
   (let [attachments (create-and-upload-slack-attachments! attachments)]
     (try
-      (log/error "TestNonLoop" (trs "Sending Slack message with {0} attachments: {1}" (count attachments) (json/generate-string attachments)))
       (slack/post-chat-message! channel-id message attachments)
       (catch ExceptionInfo e
         ;; Token errors have already been logged and we should not retry.
         (when-not (contains? (:errors (ex-data e)) :slack-token)
-          ;; Logging errors here for debug
-          (log/error e (trs "Error sending Slack message with {0} attachments" (count attachments)))
           (throw e))))))
 
 (defmethod send-notification! :email
