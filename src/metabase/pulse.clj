@@ -306,7 +306,7 @@
                           {:type   "section"
                            :fields filter-fields})]
     (if filter-section
-      {:blocks [header-section filter-section creator-section]}
+      {:blocks [header-section (split-at 10 filter-section) creator-section]}
       {:blocks [header-section creator-section]})))
 
 (defn- slack-dashboard-footer
