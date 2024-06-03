@@ -1,6 +1,7 @@
 (ns metabase.pulse
   "Public API for sending Pulses."
   (:require
+   [cheshire.core :as json]
    [clojure.string :as str]
    [metabase.api.common :as api]
    [metabase.email :as email]
@@ -318,7 +319,14 @@
                           {:type   "section"
                            :fields filter-fields})]
     (if filter-section
-      {:blocks [header-section filter-section creator-section]}
+      {:blocks
+       ;; split filter-fields in groups of ten and create a section for each group, insert those sections in between header and creator section
+        (->> (partition-all 10 filter-fields)
+             (map (fn [fields] {:type   "section"
+                                :fields fields}))
+             (cons creator-section)
+             (concat [header-section])
+             (into []))}
       {:blocks [header-section creator-section]})))
 
 (defn- slack-dashboard-footer
@@ -362,6 +370,11 @@
   "Do none of the cards have any results?"
   [results]
   (every? is-card-empty? results))
+
+(defn- filter-empty-cards
+  "Remove cards that have no results"
+  [results]
+  (filter (complement is-card-empty?) results))
 
 (defn- goal-met? [{:keys [alert_above_goal], :as pulse} [first-result]]
   (let [goal-comparison      (if alert_above_goal >= <)
@@ -509,10 +522,14 @@
 
       (when (:alert_first_only pulse)
         (t2/delete! Pulse :id pulse-id))
+      ;; Check if the pulse is set to skip if empty and so filter out the empty cards using the filter-empty-cards function
+      (let [filtered-results (if (:skip_if_empty pulse)
+                      (filter-empty-cards parts)
+                      parts)]
       ;; `channel-ids` is the set of channels to send to now, so only send to those. Note the whole set of channels
       (for [channel channels
             :when   (contains? (set channel-ids) (:id channel))]
-        (notification pulse parts channel)))))
+        (notification pulse filtered-results channel))))))
 
 (defn- pulse->notifications
   "Execute the underlying queries for a sequence of Pulses and return the parts as 'notification' maps."
@@ -544,10 +561,13 @@
   [{:keys [channel-id message attachments]}]
   (let [attachments (create-and-upload-slack-attachments! attachments)]
     (try
+      (log/error "TestNonLoop" (trs "Sending Slack message with {0} attachments: {1}" (count attachments) (json/generate-string attachments)))
       (slack/post-chat-message! channel-id message attachments)
       (catch ExceptionInfo e
         ;; Token errors have already been logged and we should not retry.
         (when-not (contains? (:errors (ex-data e)) :slack-token)
+          ;; Logging errors here for debug
+          (log/error e (trs "Error sending Slack message with {0} attachments" (count attachments)))
           (throw e))))))
 
 (defmethod send-notification! :email
