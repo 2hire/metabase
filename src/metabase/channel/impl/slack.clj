@@ -247,10 +247,10 @@
                                     {:type "mrkdwn"
                                      :text  "Made with Metabase :blue_heart:"}))}
         filter-fields   (parameter-fields top-level-params)
-        filter-section  (when (seq filter-fields)
+        filter-sections (for [fields (partition-all 10 filter-fields)]
                           {:type   "section"
-                           :fields filter-fields})]
-    (filter some? [header-section filter-section link-section])))
+                           :fields (vec fields)})]
+    (concat [header-section] filter-sections [link-section])))
 
 (defn- slack-dashboard-caption
   "A plain mrkdwn caption (dashboard title, link, and filters) used as the PDF file's `initial_comment`, so the title

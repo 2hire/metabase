@@ -155,6 +155,22 @@
       (let [links (render-dashboard-links false)]
         (is (= 2 (count links)))))))
 
+(deftest dashboard-header-splits-filter-fields-test
+  (let [parameters      (mapv (fn [index]
+                                {:name  (str "Filter " index)
+                                 :type  "string/="
+                                 :value [(str "Value " index)]})
+                              (range 11))
+        blocks          (#'channel.slack/slack-dashboard-header
+                         {:id 42, :name "Test Dashboard"}
+                         "Test User"
+                         []
+                         parameters)
+        fields-per-block (mapv (comp count :fields) (rest blocks))]
+    (testing "Slack section blocks contain at most 10 fields and keep the author link last"
+      (is (= [10 1 2] fields-per-block))
+      (is (str/includes? (-> blocks last :fields first :text) "Sent from")))))
+
 (deftest dashboard-card-links-include-parameters-test
   (let [dashboard-id 42
         card-id 123
