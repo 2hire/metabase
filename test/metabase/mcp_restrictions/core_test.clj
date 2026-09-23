@@ -168,26 +168,63 @@
                                {:request-options {:headers extra-headers}}
                                body))
 
+(defn- mcp-session-tool-caller
+  "Open an MCP session as :crowberto and return a fn that calls a tool in it and returns the MCP result."
+  []
+  (let [session-id (-> (mcp-request {:jsonrpc "2.0" :method "initialize" :params {} :id 1} {})
+                       (get-in [:headers "Mcp-Session-Id"]))
+        headers    {"mcp-session-id" session-id}]
+    (mcp-request {:jsonrpc "2.0" :method "notifications/initialized" :params {}} headers)
+    (fn [tool-name arguments]
+      (get-in (mcp-request {:jsonrpc "2.0"
+                            :method  "tools/call"
+                            :params  {:name tool-name :arguments arguments}
+                            :id      2}
+                           headers)
+              [:body :result]))))
+
+(defn- execute-sql-over-mcp
+  "Run `sql` with the `execute_sql` MCP tool and return the decoded result. Query failures come back as the streamed
+  `{:status \"failed\"}` envelope rather than as an MCP error."
+  [call-tool sql]
+  (-> (call-tool "execute_sql" {:database_id (mt/id) :sql sql})
+      :content first :text json/decode+kw))
+
 (deftest mcp-tool-call-test
   (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :venues)]]
-    (let [session-id (-> (mcp-request {:jsonrpc "2.0" :method "initialize" :params {} :id 1} {})
-                         (get-in [:headers "Mcp-Session-Id"]))
-          headers    {"mcp-session-id" session-id}
-          call-tool  (fn [tool-name arguments]
-                       (get-in (mcp-request {:jsonrpc "2.0"
-                                             :method  "tools/call"
-                                             :params  {:name tool-name :arguments arguments}
-                                             :id      2}
-                                            headers)
-                               [:body :result]))]
-      (mcp-request {:jsonrpc "2.0" :method "notifications/initialized" :params {}} headers)
+    (let [call-tool (mcp-session-tool-caller)]
       (testing "execute_sql over MCP is rejected for a restricted table"
-        ;; Query failures come back as the streamed `{:status "failed"}` envelope rather than as an MCP error.
-        (let [text (-> (call-tool "execute_sql" {:database_id (mt/id) :sql "SELECT * FROM VENUES"})
-                       :content first :text)]
-          (is (re-find restricted-message text))
-          (is (empty? (-> text json/decode+kw :data :rows)))))
+        (let [result (execute-sql-over-mcp call-tool "SELECT * FROM VENUES")]
+          (is (= "failed" (:status result)))
+          (is (re-find restricted-message (:error result)))
+          (is (empty? (-> result :data :rows)))))
       (testing "execute_sql over MCP works for other tables"
-        (let [result (call-tool "execute_sql" {:database_id (mt/id) :sql "SELECT COUNT(*) FROM CHECKINS"})]
-          (is (not (:isError result)))
-          (is (= [[1000]] (-> result :content first :text json/decode+kw :data :rows))))))))
+        (is (= [[1000]] (-> (execute-sql-over-mcp call-tool "SELECT COUNT(*) FROM CHECKINS") :data :rows)))))))
+
+(defn- admin-setting-value [setting-key]
+  (->> (mt/user-http-request :crowberto :get 200 "setting")
+       (some #(when (= setting-key (:key %)) (:value %)))))
+
+(deftest admin-settings-round-trip-test
+  (testing "The admin settings API drives the restrictions end to end, the way the Admin > AI > MCP page does"
+    ;; Restores the original value afterwards.
+    (mt/with-temporary-setting-values [mcp-restricted-table-ids []]
+      (let [call-tool (mcp-session-tool-caller)]
+        (testing "Only admins can change the restrictions"
+          (mt/user-http-request :rasta :put 403 "setting/mcp-restricted-table-ids" {:value [(mt/id :venues)]}))
+        (is (= "completed" (:status (execute-sql-over-mcp call-tool "SELECT * FROM VENUES"))))
+        (testing "Restricting a table from the admin settings API"
+          (mt/user-http-request :crowberto :put 204 "setting/mcp-restricted-table-ids" {:value [(mt/id :venues)]})
+          (is (= [(mt/id :venues)] (admin-setting-value "mcp-restricted-table-ids")))
+          (is (= "failed" (:status (execute-sql-over-mcp call-tool "SELECT * FROM VENUES")))))
+        (testing "Clearing the restriction makes the table available again"
+          (mt/user-http-request :crowberto :put 204 "setting/mcp-restricted-table-ids" {:value []})
+          ;; A value equal to the default is reported as nil; the admin page treats it as no selection.
+          (is (empty? (admin-setting-value "mcp-restricted-table-ids")))
+          (is (= "completed" (:status (execute-sql-over-mcp call-tool "SELECT * FROM VENUES")))))))
+    (mt/with-temporary-setting-values [mcp-restricted-database-ids []]
+      (let [call-tool (mcp-session-tool-caller)]
+        (testing "Restricting a whole database from the admin settings API"
+          (mt/user-http-request :crowberto :put 204 "setting/mcp-restricted-database-ids" {:value [(mt/id)]})
+          (is (= [(mt/id)] (admin-setting-value "mcp-restricted-database-ids")))
+          (is (= "failed" (:status (execute-sql-over-mcp call-tool "SELECT COUNT(*) FROM CHECKINS")))))))))
