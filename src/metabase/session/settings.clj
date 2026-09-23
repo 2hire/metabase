@@ -12,7 +12,8 @@
   :visibility :public
   :type       :boolean
   :default    true
-  :feature    :disable-password-login
+  ;; 2hire: no `:feature :disable-password-login` gate, so this works on OSS builds too (set
+  ;; `MB_ENABLE_PASSWORD_LOGIN=false` to allow Google Sign-In only).
   :audit      :raw-value
   :getter     (fn []
                 ;; if `:enable-password-login` has an *explicit* (non-default) value, and SSO is configured, use that;

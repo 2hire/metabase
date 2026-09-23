@@ -232,16 +232,11 @@
                                        jwt-identity-provider-uri "example.com"
                                        jwt-shared-secret         "0123456789012345678901234567890123456789012345678901234567890123"
                                        enable-password-login     true]
-      (testing "can't change enable-password-login setting if disabled-password-login feature is disabled"
-        (is (thrown-with-msg?
-             clojure.lang.ExceptionInfo
-             #"Setting enable-password-login is not enabled because feature :disable-password-login is not available"
-             (session/enable-password-login! false))))
-      (testing "can change enable-password-login setting if jwt enabled and have disabled-password-login feature"
-        (mt/with-additional-premium-features #{:disable-password-login}
-          (session/enable-password-login! false)
-          (is (= false
-                 (session/enable-password-login))))))))
+      ;; 2hire: the `:disable-password-login` feature gate was removed, so no premium feature is required
+      (testing "can change enable-password-login setting if jwt enabled"
+        (session/enable-password-login! false)
+        (is (= false
+               (session/enable-password-login)))))))
 
 (deftest sso-source-enabled?-saml-test
   (testing "sso-source-enabled? for SAML"
