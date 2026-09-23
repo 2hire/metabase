@@ -89,26 +89,21 @@
   [query :- ::lib.schema/query]
   (u/assoc-dissoc query :query-permissions/referenced-card-ids (lib/all-source-card-ids-recursive query)))
 
-(defn- native-query-strings
-  "Every native query in the preprocessed legacy `query`, at any depth: the top-level `:native` map as well as native
-  source queries of nested stages and joins. Non-string native queries (e.g. MongoDB pipelines) are printed so they can
-  still be searched for table names."
+(defn- native-query?
+  "Whether the preprocessed legacy `query` runs a native query anywhere: at the top level, or as the source of a nested
+  stage or a join (e.g. a saved SQL question used as a source)."
   [query]
-  (into []
-        (comp (filter map?)
-              (keep :native)
-              (keep #(if (map? %) (:query %) %))
-              (map #(if (string? %) % (pr-str %))))
-        (tree-seq coll? seq query)))
+  (boolean (some #(and (map? %) (contains? % :native)) (tree-seq coll? seq query))))
 
 (defn- check-mcp-restrictions
-  "When the query comes from an MCP client, reject it if it reads a database or table the admin restricted, for every
-  user, admins included. Runs before the regular permission checks, which admins would pass."
+  "When the query comes from an MCP client, reject it if it reads a database or table the admin restricted, or runs
+  native SQL on a database that holds restricted tables, for every user, admins included. Runs before the regular
+  permission checks, which admins would pass."
   [{database-id :database :as outer-query}]
   (when (mcp-restrictions/enforced?)
     (mcp-restrictions/check-query-allowed! database-id
                                            (query-perms/query->source-table-ids outer-query)
-                                           (native-query-strings outer-query))))
+                                           (native-query? outer-query))))
 
 (mu/defn check-query-permissions*
   "Check that User with `user-id` has permissions to run `query`, or throw an exception."

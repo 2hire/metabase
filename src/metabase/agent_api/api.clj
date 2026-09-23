@@ -719,6 +719,8 @@
   ;; Kill-switch check: refuse with 403 when the admin has disabled execute_sql.
   (when-not (agent-api.settings/mcp-execute-sql-enabled)
     (throw (ex-info "execute_sql is disabled on this instance" {:status-code 403})))
+  ;; Before the native-permission check, which also fails on such databases, to tell MCP clients why.
+  (mcp-restrictions/check-query-allowed! database_id #{} true)
   (let [raw-query {:database database_id
                    :type     :native
                    :native   {:query sql}}]
