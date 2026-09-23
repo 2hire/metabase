@@ -408,14 +408,25 @@
   *  `*current-user-permissions-set*`   delay that returns the set of permissions granted to the current user from DB
   *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user
 
-  Requests authenticated as an MCP client also run with the MCP data restrictions enforced."
+  Requests authenticated as an MCP client are rejected when the user is not on the MCP access list, and otherwise run
+  with the MCP data restrictions enforced."
   [handler]
   (fn [request respond raise]
     (with-current-user-for-request request
-      (if (mcp-client-request? request)
+      (cond
+        (not (mcp-client-request? request))
+        (handler request respond raise)
+
+        ;; Tokens issued before the user was removed from the MCP access list stop working right away.
+        (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
+        (respond {:status  403
+                  :headers {"Content-Type" "application/json"}
+                  :body    {:error   "mcp_access_denied"
+                            :message (mcp-restrictions/access-denied-message)}})
+
+        :else
         (mcp-restrictions/with-restrictions-enforced
-          (handler request respond raise))
-        (handler request respond raise)))))
+          (handler request respond raise))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                         session activity tracking                                              |

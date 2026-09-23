@@ -8,6 +8,7 @@
    [malli.core :as mc]
    [metabase.api-scope.core :as api-scope]
    [metabase.api.macros :as api.macros]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.oauth-server.consent-page :as consent-page]
    [metabase.oauth-server.core :as oauth-server]
    [metabase.oauth-server.models.oauth-client-event :as client-event]
@@ -269,9 +270,17 @@
                :body    body}))))
       {:status 404 :body {:error "not_found"}}))
 
+(defn- access-denied-response
+  "Response for a user who is not on the MCP access list: no authorization code, hence no access token, is issued."
+  []
+  {:status  403
+   :headers {"Content-Type" "application/json"}
+   :body    {:error             "access_denied"
+             :error_description (mcp-restrictions/access-denied-message)}})
+
 #_{:clj-kondo/ignore [:metabase/validate-defendpoint-query-params-use-kebab-case]}
 (api.macros/defendpoint :get "/authorize"
-  :- [:map [:status [:enum 200 302 400 404]] [:body [:or :string :map]]]
+  :- [:map [:status [:enum 200 302 400 403 404]] [:body [:or :string :map]]]
   "Handles the authorization endpoint (GET /oauth/authorize)."
   [_route-params
    query-params :- [:map
@@ -287,10 +296,16 @@
                     [::mc/default [:map-of :keyword :string]]]
    _body
    request]
-  (if-not (:metabase-user-id request)
+  (cond
+    (not (:metabase-user-id request))
     {:status  302
      :headers {"Location" (login-redirect-url request)}
      :body    ""}
+
+    (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
+    (access-denied-response)
+
+    :else
     (or (when-let [provider (oauth-server/get-provider)]
           (try
             (let [parsed       (oidc/parse-authorization-request provider query-params)
@@ -336,10 +351,16 @@
             [:resource              {:optional true} [:maybe [:or :string [:sequential :string]]]]
             [::mc/default [:map-of :keyword :string]]]
    request]
-  (if-not (:metabase-user-id request)
+  (cond
+    (not (:metabase-user-id request))
     {:status  401
      :headers {"Content-Type" "application/json"}
      :body    {:error "unauthorized"}}
+
+    (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
+    (access-denied-response)
+
+    :else
     (with-throttling-429 [authorize-decision-throttler (:metabase-user-id request)]
       (or (when-let [provider (oauth-server/get-provider)]
             (let [cookie-token (get-in request [:cookies csrf-cookie-name :value])

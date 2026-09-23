@@ -7,12 +7,14 @@ import {
   setupCollectionByIdEndpoint,
   setupCollectionsEndpoints,
   setupDatabasesEndpoints,
+  setupGroupsEndpoint,
   setupPropertiesEndpoints,
   setupRecentViewsAndSelectionsEndpoints,
   setupRootCollectionItemsEndpoint,
   setupSettingsEndpoints,
   setupTablesEndpoints,
   setupUpdateSettingEndpoint,
+  setupUsersEndpoints,
 } from "__support__/server-mocks";
 import {
   setupMetabotPromptSuggestionsEndpoint,
@@ -132,6 +134,8 @@ const setup = async ({
   setupMetabotsEndpoints(metabots);
   setupDatabasesEndpoints([], { hasSavedQuestions: false });
   setupTablesEndpoints([]);
+  setupUsersEndpoints([]);
+  setupGroupsEndpoint([]);
 
   [FIXED_METABOT_IDS.DEFAULT, FIXED_METABOT_IDS.EMBEDDED].forEach((metabotId) =>
     setupMetabotPromptSuggestionsEndpoint({

@@ -1648,11 +1648,23 @@
     (mcp-restrictions/with-restrictions-enforced
       (handler request respond raise))))
 
+(defn- enforce-mcp-access-list
+  "Middleware that rejects authenticated users who are not on the MCP access list. Runs after authentication, so the
+  current user is bound whichever way the request authenticated."
+  [handler]
+  (fn [request respond raise]
+    (if (mcp-restrictions/user-allowed? api/*current-user-id*)
+      (handler request respond raise)
+      (respond {:status  403
+                :headers {"Content-Type" "application/json"}
+                :body    {:error   "mcp_access_denied"
+                          :message (mcp-restrictions/access-denied-message)}}))))
+
 (def +auth
   "Agent API authentication middleware. Supports both session-based and stateless JWT authentication, and enforces the
-  MCP data restrictions."
+  MCP access list and data restrictions."
   (api.routes.common/wrap-middleware-for-open-api-spec-generation
-   (comp enforce-mcp-restrictions enforce-authentication)))
+   (comp enforce-mcp-restrictions enforce-authentication enforce-mcp-access-list)))
 
 (def +agent-api-enabled
   "Wrap routes so they may only be accessed when the Agent API is enabled."

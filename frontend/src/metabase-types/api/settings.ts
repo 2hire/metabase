@@ -846,6 +846,8 @@ export interface EnterpriseSettings extends Settings {
   "mcp-apps-cors-custom-origins": string | null;
   "mcp-restricted-database-ids": number[] | null;
   "mcp-restricted-table-ids": number[] | null;
+  "mcp-allowed-user-ids": number[] | null;
+  "mcp-allowed-group-ids": number[] | null;
   "transforms-meter-locked": boolean | null;
   /**
    * @deprecated
