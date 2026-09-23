@@ -119,6 +119,7 @@
   uuid-nonce-base
   validate-settings-formatting!
   validate-settable-for-db!
+  with-extra-sensitive-settings
   writable-settings]
  [metabase.settings.models.setting.cache
   cache-update-check-interval-ms

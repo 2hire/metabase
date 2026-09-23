@@ -7,13 +7,16 @@
    [metabase.mcp-restrictions.settings :as mcp-restrictions.settings]
    [metabase.mcp.resources :as mcp.resources]
    [metabase.models.interface :as mi]
+   [metabase.oauth-server.core :as oauth-server]
+   [metabase.parameters.field-values :as params.field-values]
+   [metabase.permissions.core :as perms]
    [metabase.query-processor.core :as qp]
-   [metabase.server.middleware.session :as mw.session]
    [metabase.test :as mt]
    [metabase.test.data.users :as test.users]
    [metabase.test.fixtures :as fixtures]
    [metabase.test.http-client :as client]
    [metabase.util.json :as json]
+   [oidc-provider.store :as oidc.store]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
@@ -25,6 +28,8 @@
     (mcp.resources/with-fallback-template (thunk))))
 
 (def ^:private restricted-message #"not available to MCP clients")
+
+(def ^:private native-message #"SQL queries are not available to MCP clients")
 
 (defn- run-query [query]
   (mt/rows (qp/process-query query)))
@@ -69,15 +74,26 @@
             (let [mp (mt/metadata-provider)]
               (is (thrown-with-msg? clojure.lang.ExceptionInfo restricted-message
                                     (run-query (lib/query mp (lib.metadata/card mp (:id card)))))))))
-        (testing "Native queries naming a restricted table are rejected, whatever the quoting or case"
+        (testing "Native queries are rejected on a database that holds a restricted table, whatever they read"
+          ;; Including an identifier escape that names VENUES without spelling it out.
           (doseq [sql ["SELECT * FROM VENUES"
-                       "select name from \"PUBLIC\".\"venues\" limit 1"
-                       "SELECT c.* FROM CHECKINS c JOIN venues v ON v.id = c.venue_id"]]
-            (is (thrown-with-msg? clojure.lang.ExceptionInfo restricted-message
+                       "SELECT ID, NAME FROM U&\"VENUE\\0053\""
+                       "SELECT COUNT(*) FROM CHECKINS"]]
+            (is (thrown-with-msg? clojure.lang.ExceptionInfo native-message
                                   (run-query (mt/native-query {:query sql})))
                 sql)))
-        (testing "Native queries that only mention similarly-named identifiers are allowed"
-          (is (= [[1000]] (run-query (mt/native-query {:query "SELECT COUNT(VENUE_ID) FROM CHECKINS"})))))))))
+        (testing "A saved SQL question used as a source is rejected the same way"
+          (mt/with-temp [:model/Card card {:dataset_query (mt/native-query {:query "SELECT 1 AS ONE"})}]
+            (let [mp (mt/metadata-provider)]
+              (is (thrown-with-msg? clojure.lang.ExceptionInfo native-message
+                                    (run-query (lib/query mp (lib.metadata/card mp (:id card)))))))))))
+    (testing "Native queries still work on databases without restricted tables"
+      (mt/with-temp [:model/Database {other-db :id} {:engine :h2}
+                     :model/Table    {other-table :id} {:db_id other-db :name "SECRETS"}]
+        (mt/with-temporary-setting-values [mcp-restricted-table-ids [other-table]]
+          (mt/with-test-user :crowberto
+            (mcp-restrictions/with-restrictions-enforced
+              (is (= [[1000]] (run-query (mt/native-query {:query "SELECT COUNT(*) FROM CHECKINS"})))))))))))
 
 (deftest restricted-database-query-test
   (mt/with-temporary-setting-values [mcp-restricted-database-ids [(mt/id)]]
@@ -122,31 +138,13 @@
                   {:type "dashboard" :id 1}]
                  (mcp-restrictions/remove-restricted-search-results results))))))))
 
-(deftest session-middleware-test
-  (testing "Requests authenticated as an MCP client run with the restrictions enforced"
-    (let [handler (mw.session/bind-current-user
-                   (fn [_request respond _raise] (respond (mcp-restrictions/enforced?))))
-          run     (fn [auth-method]
-                    (let [result (promise)]
-                      (handler {:embedding/auth-method auth-method} #(deliver result %) identity)
-                      @result))]
-      (is (true? (run "oauth")))
-      (is (true? (run "mcp-ui")))
-      (is (false? (run "session")))
-      (is (false? (run nil))))))
-
 (deftest agent-api-test
   (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :venues)]]
-    (testing "The Agent API rejects native SQL on a restricted table, even for admins"
-      (let [resp (mt/user-http-request :crowberto :post 403 "agent/v1/execute-sql"
-                                       {:database_id (mt/id)
-                                        :sql         "SELECT * FROM VENUES"})]
-        (is (re-find restricted-message (pr-str resp)))))
-    (testing "Unrestricted tables are still queryable"
-      (is (= "completed"
-             (:status (mt/user-http-request :crowberto :post 202 "agent/v1/execute-sql"
-                                            {:database_id (mt/id)
-                                             :sql         "SELECT COUNT(*) FROM CHECKINS"})))))
+    (testing "The Agent API rejects native SQL on a database that holds a restricted table, even for admins"
+      (doseq [sql ["SELECT * FROM VENUES" "SELECT COUNT(*) FROM CHECKINS"]]
+        (let [resp (mt/user-http-request :crowberto :post 403 "agent/v1/execute-sql"
+                                         {:database_id (mt/id) :sql sql})]
+          (is (re-find native-message (pr-str resp)) sql))))
     (testing "Restricted tables cannot be read as resources"
       (let [{[resource] :resources} (mt/user-http-request :crowberto :post 200 "agent/v1/read-resource"
                                                           {:uris [(str "metabase://table/" (mt/id :venues))]})]
@@ -187,19 +185,27 @@
   "Run `sql` with the `execute_sql` MCP tool and return the decoded result. Query failures come back as the streamed
   `{:status \"failed\"}` envelope rather than as an MCP error."
   [call-tool sql]
-  (-> (call-tool "execute_sql" {:database_id (mt/id) :sql sql})
-      :content first :text json/decode+kw))
+  (let [{:keys [isError content]} (call-tool "execute_sql" {:database_id (mt/id) :sql sql})
+        text                      (:text (first content))]
+    ;; Checks that run before the query come back as a plain-text MCP error instead.
+    (if isError
+      {:status "failed" :error text}
+      (json/decode+kw text))))
 
 (deftest mcp-tool-call-test
   (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :venues)]]
     (let [call-tool (mcp-session-tool-caller)]
-      (testing "execute_sql over MCP is rejected for a restricted table"
+      (testing "execute_sql over MCP is rejected on a database that holds a restricted table"
         (let [result (execute-sql-over-mcp call-tool "SELECT * FROM VENUES")]
           (is (= "failed" (:status result)))
-          (is (re-find restricted-message (:error result)))
-          (is (empty? (-> result :data :rows)))))
-      (testing "execute_sql over MCP works for other tables"
-        (is (= [[1000]] (-> (execute-sql-over-mcp call-tool "SELECT COUNT(*) FROM CHECKINS") :data :rows)))))))
+          (is (re-find native-message (:error result)))
+          (is (empty? (-> result :data :rows)))))))
+  (testing "execute_sql over MCP works on databases without restricted tables"
+    (mt/with-temp [:model/Database {other-db :id} {:engine :h2}
+                   :model/Table    {other-table :id} {:db_id other-db :name "SECRETS"}]
+      (mt/with-temporary-setting-values [mcp-restricted-table-ids [other-table]]
+        (is (= [[1000]] (-> (execute-sql-over-mcp (mcp-session-tool-caller) "SELECT COUNT(*) FROM CHECKINS")
+                            :data :rows)))))))
 
 (defn- admin-setting-value [setting-key]
   (->> (mt/user-http-request :crowberto :get 200 "setting")
@@ -228,3 +234,111 @@
           (mt/user-http-request :crowberto :put 204 "setting/mcp-restricted-database-ids" {:value [(mt/id)]})
           (is (= [(mt/id)] (admin-setting-value "mcp-restricted-database-ids")))
           (is (= "failed" (:status (execute-sql-over-mcp call-tool "SELECT COUNT(*) FROM CHECKINS")))))))))
+
+;;; ------------------------------------------ Requests with OAuth tokens ------------------------------------------
+
+(defn- save-access-token!
+  "Persist an OAuth access token for `username` into the provider backing the embedded authorization server."
+  [token username scopes]
+  (oidc.store/save-access-token (:token-store (oauth-server/get-provider))
+                                token (str (mt/user->id username)) "test-client" (vec scopes)
+                                (+ (inst-ms (java.util.Date.)) 3600000) nil))
+
+(defn- bearer-request
+  [token method expected-status url & body]
+  (:body (apply client/client-full-response method expected-status url
+                {:request-options {:headers {"authorization" (str "Bearer " token)}}}
+                body)))
+
+(deftest oauth-client-test
+  (mt/with-temporary-setting-values [site-url                 "http://localhost:3000"
+                                     mcp-restricted-table-ids [(mt/id :venues)]
+                                     embedding-secret-key     (apply str (repeat 64 "a"))]
+    (oauth-server/reset-provider!)
+    ;; `mb:full` is the scope the Metabase CLI asks for: every OAuth token is treated as an AI client.
+    (let [token (str "test-token-" (random-uuid))]
+      (save-access-token! token :crowberto ["mb:full"])
+      (testing "Restricted tables are hidden from the REST API, admins included"
+        (let [table-ids (into #{} (map :id) (bearer-request token :get 200 "table"))]
+          (is (contains? table-ids (mt/id :checkins)))
+          (is (not (contains? table-ids (mt/id :venues)))))
+        (bearer-request token :get 403 (str "table/" (mt/id :venues))))
+      (testing "Queries through the REST API are restricted"
+        (is (re-find restricted-message
+                     (str (:error (bearer-request token :post 403 "dataset" (mt/mbql-query venues))))))
+        (is (= "completed" (:status (bearer-request token :post 202 "dataset"
+                                                    (mt/mbql-query checkins {:aggregation [[:count]]}))))))
+      (testing "Writes outside the allowed endpoints are rejected with a JSON 403"
+        (doseq [[method url] [[:post "notification"]
+                              [:put "setting/mcp-restricted-table-ids"]
+                              [:post "api-key"]
+                              [:post (str "card/" 1 "/public_link")]]]
+          (is (= "mcp_write_denied" (:error (bearer-request token method 403 url {})))
+              (str method " " url))))
+      (testing "Settings that look like secrets are obfuscated"
+        (let [settings (bearer-request token :get 200 "setting")
+              value    (some #(when (= "embedding-secret-key" (:key %)) (:value %)) settings)]
+          (is (string? value))
+          (is (not= (apply str (repeat 64 "a")) value)))))
+    (testing "The same user with a session cookie is unaffected"
+      (is (= 100 (count (mt/rows (mt/user-http-request :crowberto :post 202 "dataset" (mt/mbql-query venues))))))
+      (is (= (apply str (repeat 64 "a"))
+             (some #(when (= "embedding-secret-key" (:key %)) (:value %))
+                   (mt/user-http-request :crowberto :get 200 "setting")))))))
+
+;;; --------------------------------------------- Other enforcement ----------------------------------------------
+
+(deftest data-permissions-test
+  (mt/with-temporary-setting-values [mcp-restricted-table-ids    [(mt/id :venues)]
+                                     mcp-restricted-database-ids []]
+    (mt/with-test-user :crowberto
+      (let [admin-id (mt/user->id :crowberto)]
+        (is (= :unrestricted (perms/table-permission-for-user admin-id :perms/view-data (mt/id) (mt/id :venues))))
+        (mcp-restrictions/with-restrictions-enforced
+          (testing "Admins get no data permissions on restricted tables"
+            (is (not= :unrestricted
+                      (perms/table-permission-for-user admin-id :perms/view-data (mt/id) (mt/id :venues))))
+            (is (= :unrestricted
+                   (perms/table-permission-for-user admin-id :perms/view-data (mt/id) (mt/id :checkins))))))))))
+
+(deftest field-values-read-only-test
+  (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :venues)]]
+    (mt/with-test-user :crowberto
+      (let [field    (t2/select-one :model/Field :id (mt/id :categories :name))
+            existing (params.field-values/get-or-create-field-values! field)]
+        (mcp-restrictions/with-restrictions-enforced
+          (testing "Restricted tables get no values"
+            (is (= [] (:values (params.field-values/get-or-create-field-values!
+                                (t2/select-one :model/Field :id (mt/id :venues :name)))))))
+          (testing "Cached values are served as they are"
+            (is (= (:values existing) (:values (params.field-values/get-or-create-field-values! field)))))
+          (testing "Missing values are not computed, so nothing is stored"
+            (mt/with-temp [:model/Field {new-field-id :id} {:table_id (mt/id :checkins) :name "NEW_FIELD"
+                                                            :base_type :type/Text :has_field_values :list}]
+              (is (= [] (:values (params.field-values/get-or-create-field-values!
+                                  (t2/select-one :model/Field :id new-field-id)))))
+              (is (not (t2/exists? :model/FieldValues :field_id new-field-id))))))))))
+
+(deftest remapping-into-restricted-table-test
+  (testing "A display-value remap into a restricted table is skipped rather than failing the query"
+    (mt/with-column-remappings [venues.category_id categories.name]
+      (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :categories)]]
+        (mt/with-test-user :crowberto
+          (mcp-restrictions/with-restrictions-enforced
+            (let [result (qp/process-query (mt/mbql-query venues {:fields   [$id $category_id]
+                                                                  :order-by [[:asc $id]]
+                                                                  :limit    2}))]
+              (is (= [[1 4] [2 11]] (mt/rows result))))))))))
+
+(deftest card-resource-with-join-test
+  (testing "A question that joins a restricted table can't be read as a resource"
+    (mt/with-temporary-setting-values [mcp-restricted-table-ids [(mt/id :venues)]]
+      (mt/with-temp [:model/Card {card-id :id} {:dataset_query (mt/mbql-query checkins
+                                                                 {:joins [{:source-table (mt/id :venues)
+                                                                           :alias        "v"
+                                                                           :condition    [:= $venue_id &v.venues.id]
+                                                                           :fields       :all}]})}]
+        (let [{[resource] :resources} (mt/user-http-request :crowberto :post 200 "agent/v1/read-resource"
+                                                            {:uris [(str "metabase://question/" card-id "/fields")]})]
+          (is (some? (:error resource)))
+          (is (nil? (:content resource))))))))

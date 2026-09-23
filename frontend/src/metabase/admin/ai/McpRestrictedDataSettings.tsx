@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { t } from "ttag";
 import _ from "underscore";
 
@@ -54,6 +54,11 @@ export const McpRestrictedDataSettings = () => {
     "mcp-restricted-table-ids",
   );
 
+  // Each change saves the whole list, so the latest selection lives in local state: deriving it from the saved setting
+  // would drop a pick made before the previous save had been refetched.
+  const [databaseValues, setDatabaseValues] = useState<string[] | null>(null);
+  const [tableValues, setTableValues] = useState<string[] | null>(null);
+
   const databases = useMemo(
     () => databasesResponse?.data ?? [],
     [databasesResponse],
@@ -78,30 +83,32 @@ export const McpRestrictedDataSettings = () => {
           description={t`Every table in these databases is restricted.`}
           placeholder={t`Select databases`}
           data={databaseOptions}
-          value={toValues(restrictedDatabaseIds)}
+          value={databaseValues ?? toValues(restrictedDatabaseIds)}
           disabled={isLoadingDatabases}
-          onChange={(values) =>
+          onChange={(values) => {
+            setDatabaseValues(values);
             updateSetting({
               key: "mcp-restricted-database-ids",
               value: toIds(values),
-            })
-          }
+            });
+          }}
           searchable
           clearable
         />
         <MultiSelect
           label={t`Restricted tables`}
-          description={t`SQL queries that mention one of these tables by name are rejected too.`}
+          description={t`MCP clients also can't run SQL queries on a database that holds one of these tables.`}
           placeholder={t`Select tables`}
           data={tableOptions}
-          value={toValues(restrictedTableIds)}
+          value={tableValues ?? toValues(restrictedTableIds)}
           disabled={isLoadingTables}
-          onChange={(values) =>
+          onChange={(values) => {
+            setTableValues(values);
             updateSetting({
               key: "mcp-restricted-table-ids",
               value: toIds(values),
-            })
-          }
+            });
+          }}
           searchable
           clearable
         />

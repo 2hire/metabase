@@ -367,26 +367,27 @@
            token-scopes (:token-scopes request)]
        (letfn [(dispatch [user-id token-scopes]
                  (request/with-current-user user-id
-                   (if-not (mcp-restrictions/user-allowed? user-id)
-                     (respond (json-response 403 (jsonrpc-error nil -32603 (mcp-restrictions/access-denied-message))))
-                     (if-let [throttle-err (check-throttle user-id)]
-                       (respond throttle-err)
-                       (try
-                         (let [request (assoc request :token-scopes token-scopes)]
-                           (cond
-                             (= :post (:request-method request))
-                             (respond (handle-post user-id request))
+                   (if-let [throttle-err (check-throttle user-id)]
+                     (respond throttle-err)
+                     (try
+                       (let [request (assoc request :token-scopes token-scopes)]
+                         (cond
+                           (not (mcp-restrictions/user-allowed? user-id))
+                           (respond (json-response 403 (jsonrpc-error nil -32603 (mcp-restrictions/access-denied-message))))
 
-                             (= :get (:request-method request))
-                             (handle-get user-id request respond raise)
+                           (= :post (:request-method request))
+                           (respond (handle-post user-id request))
 
-                             (= :delete (:request-method request))
-                             (respond (handle-delete user-id request))
+                           (= :get (:request-method request))
+                           (handle-get user-id request respond raise)
 
-                             :else
-                             (respond (json-response 405 (jsonrpc-error nil -32600 "Method not allowed")))))
-                         (catch Throwable e
-                           (raise e)))))))]
+                           (= :delete (:request-method request))
+                           (respond (handle-delete user-id request))
+
+                           :else
+                           (respond (json-response 405 (jsonrpc-error nil -32600 "Method not allowed")))))
+                       (catch Throwable e
+                         (raise e))))))]
          (cond
            (some? origin-error)
            (respond origin-error)

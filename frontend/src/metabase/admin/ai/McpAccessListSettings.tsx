@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { t } from "ttag";
 
 import { SettingsSection } from "metabase/admin/components/SettingsSection";
@@ -34,6 +34,11 @@ export const McpAccessListSettings = () => {
   );
   const { value: allowedGroupIds } = useAdminSetting("mcp-allowed-group-ids");
 
+  // Each change saves the whole list, so the latest selection lives in local state: deriving it from the saved setting
+  // would drop a pick made before the previous save had been refetched.
+  const [userValues, setUserValues] = useState<string[] | null>(null);
+  const [groupValues, setGroupValues] = useState<string[] | null>(null);
+
   const userOptions = useMemo(
     () => getUserOptions(usersResponse?.data ?? []),
     [usersResponse],
@@ -50,11 +55,15 @@ export const McpAccessListSettings = () => {
           label={t`Allowed users`}
           placeholder={t`Select users`}
           data={userOptions}
-          value={toValues(allowedUserIds)}
+          value={userValues ?? toValues(allowedUserIds)}
           disabled={isLoadingUsers}
-          onChange={(values) =>
-            updateSetting({ key: "mcp-allowed-user-ids", value: toIds(values) })
-          }
+          onChange={(values) => {
+            setUserValues(values);
+            updateSetting({
+              key: "mcp-allowed-user-ids",
+              value: toIds(values),
+            });
+          }}
           searchable
           clearable
         />
@@ -63,14 +72,15 @@ export const McpAccessListSettings = () => {
           description={t`Every member of these groups can use the MCP server.`}
           placeholder={t`Select groups`}
           data={groupOptions}
-          value={toValues(allowedGroupIds)}
+          value={groupValues ?? toValues(allowedGroupIds)}
           disabled={isLoadingGroups}
-          onChange={(values) =>
+          onChange={(values) => {
+            setGroupValues(values);
             updateSetting({
               key: "mcp-allowed-group-ids",
               value: toIds(values),
-            })
-          }
+            });
+          }}
           searchable
           clearable
         />

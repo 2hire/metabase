@@ -1152,6 +1152,7 @@
    :api  #{metabase.lib-be.core metabase.lib-be.init metabase.lib-be.schema}
    :uses #{legacy-mbql
            lib
+           mcp-restrictions
            models
            settings
            util}
@@ -1254,8 +1255,7 @@
   {:team "Metabot"
    :api  #{metabase.mcp-restrictions.core
            metabase.mcp-restrictions.init}
-   :uses #{settings
-           util}
+   :uses #{api settings util}
    :model-imports #{:model/Card
                     :model/PermissionsGroupMembership
                     :model/Table
@@ -1543,6 +1543,7 @@
            classloader
            lib
            lib-be
+           mcp-restrictions
            models
            query-processor
            util
@@ -1565,6 +1566,7 @@
            config
            events
            lib
+           mcp-restrictions
            models
            premium-features
            remote-sync

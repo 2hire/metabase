@@ -1494,6 +1494,23 @@
       (setting.cache/restore-cache!)
       (throw e))))
 
+(def ^:dynamic *extra-sensitive-setting?*
+  "Predicate on a Setting name (a keyword) for Settings to treat as `:sensitive?` in the current context, on top of the
+  ones declared sensitive. Bind it with [[with-extra-sensitive-settings]]."
+  (constantly false))
+
+(defmacro with-extra-sensitive-settings
+  "Run `body` treating the Settings whose name satisfies `pred` as `:sensitive?`: their values are obfuscated by the
+  settings API and left out of the read-only settings maps. Used to keep secrets such as signing keys away from
+  clients that must not see them, whatever their user's permissions."
+  [pred & body]
+  `(binding [*extra-sensitive-setting?* ~pred]
+     ~@body))
+
+(defn- sensitive-setting?
+  [{:keys [sensitive?], k :name}]
+  (boolean (or sensitive? (*extra-sensitive-setting?* k))))
+
 (defn user-facing-value
   "Get the value of a Setting that should be displayed to a User (i.e. via `/api/setting/` endpoints): for Settings set
   via env vars, or Settings whose value has not been set (i.e., Settings whose value is the same as the default value)
@@ -1505,7 +1522,8 @@
   convert the setting to the appropriate type; you can use `(partial get-value-of-type :string)` to get all string
   values of Settings, for example."
   [setting-definition-or-name & {:keys [getter], :or {getter get}}]
-  (let [{:keys [sensitive? visibility default], k :name, :as setting} (resolve-setting setting-definition-or-name)
+  (let [{:keys [visibility default], k :name, :as setting} (resolve-setting setting-definition-or-name)
+        sensitive?                                                     (sensitive-setting? setting)
         unparsed-value                                                (get-value-of-type :string k)
         parsed-value                                                  (getter k)
         ;; `default` and `env-var-value` are probably still in serialized form so compare
@@ -1626,7 +1644,7 @@
    `allowed-visibilities` is a set of visibilities that the user can read."
   [setting allowed-visibilities]
   (let [setting (resolve-setting setting)]
-    (boolean (and (not (:sensitive? setting))
+    (boolean (and (not (sensitive-setting? setting))
                   (contains? allowed-visibilities (:visibility setting))))))
 
 (defn user-readable-values-map
