@@ -1,4 +1,5 @@
 import userEvent from "@testing-library/user-event";
+import fetchMock from "fetch-mock";
 import { Route } from "react-router";
 
 import { setupEnterprisePlugins } from "__support__/enterprise";
@@ -136,6 +137,10 @@ const setup = async ({
   setupTablesEndpoints([]);
   setupUsersEndpoints([]);
   setupGroupsEndpoint([]);
+  fetchMock.get("path:/api/mcp-restrictions/sensitive-fields", {
+    sensitive: [],
+    excluded: [],
+  });
 
   [FIXED_METABOT_IDS.DEFAULT, FIXED_METABOT_IDS.EMBEDDED].forEach((metabotId) =>
     setupMetabotPromptSuggestionsEndpoint({

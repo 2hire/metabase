@@ -1252,11 +1252,15 @@
 
   mcp-restrictions
   {:team "Metabot"
-   :api  #{metabase.mcp-restrictions.core
+   :api  #{metabase.mcp-restrictions.api
+           metabase.mcp-restrictions.core
            metabase.mcp-restrictions.init}
-   :uses #{settings
+   :uses #{api
+           settings
            util}
    :model-imports #{:model/Card
+                    :model/Database
+                    :model/Field
                     :model/PermissionsGroupMembership
                     :model/Table
                     :model/User}}
@@ -1543,6 +1547,7 @@
            classloader
            lib
            lib-be
+           mcp-restrictions
            models
            query-processor
            util

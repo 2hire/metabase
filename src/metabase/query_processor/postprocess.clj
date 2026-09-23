@@ -12,6 +12,7 @@
    [metabase.query-processor.middleware.format-rows :as format-rows]
    [metabase.query-processor.middleware.large-int :as large-int]
    [metabase.query-processor.middleware.limit :as limit]
+   [metabase.query-processor.middleware.mcp-restrictions :as qp.mcp-restrictions]
    [metabase.query-processor.middleware.pivot-export :as pivot-export]
    [metabase.query-processor.middleware.results-metadata :as results-metadata]
    [metabase.query-processor.middleware.visualization-settings :as viz-settings]
@@ -32,7 +33,9 @@
     (f metadata) -> rf
 
   All of these middlewares assume MBQL 5."
-  [#'qp.pivot.middleware/add-pivot-grouping
+  [;; innermost, so it sees the final rows and the annotated column metadata
+   #'qp.mcp-restrictions/mask-sensitive-values
+   #'qp.pivot.middleware/add-pivot-grouping
    #'qp.pivot.middleware/project-pivot-subquery-rows
    #'format-rows/format-rows
    #'results-metadata/record-and-return-metadata!

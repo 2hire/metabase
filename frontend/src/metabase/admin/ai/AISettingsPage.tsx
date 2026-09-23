@@ -25,6 +25,7 @@ import { EmbeddedMetabotUpsell } from "./EmbeddedMetabotUpsell";
 import { McpAccessListSettings } from "./McpAccessListSettings";
 import { McpAppsSettings } from "./McpAppsSettings";
 import { McpRestrictedDataSettings } from "./McpRestrictedDataSettings";
+import { McpSensitiveFieldsSettings } from "./McpSensitiveFieldsSettings";
 import { MetabotSettingsPanel } from "./MetabotSettingsPanel";
 
 type MetabotTabId =
@@ -114,6 +115,8 @@ export function McpSettingsPage() {
         <McpAccessListSettings />
 
         <McpRestrictedDataSettings />
+
+        <McpSensitiveFieldsSettings />
 
         <AgentApiSettingsSection disabled={!areAiFeaturesEnabled} />
       </DisabledSection>

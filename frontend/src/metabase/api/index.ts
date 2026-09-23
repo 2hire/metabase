@@ -27,6 +27,7 @@ export * from "./group-table-access-policy";
 export * from "./ldap";
 export * from "./llm";
 export * from "./login-history";
+export * from "./mcp-restrictions";
 export * from "./measure";
 export * from "./metabot";
 export * from "./metric";
