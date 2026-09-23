@@ -12,6 +12,7 @@
    [metabase.driver.settings :as driver.settings]
    [metabase.driver.util :as driver.u]
    [metabase.lib.schema.id :as lib.schema.id]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
    [metabase.permissions.core :as perms]
@@ -112,6 +113,7 @@
   ([_model database-id]
    (cond
      (should-read-audit-db? database-id) false
+     (mcp-restrictions/restricted-database? database-id) false
      (db-id->router-db-id database-id) (mi/can-read? :model/Database (db-id->router-db-id database-id))
      :else (or
             ;; Has query builder access
@@ -144,6 +146,7 @@
   ([_model database-id]
    (cond
      (should-read-audit-db? database-id) false
+     (mcp-restrictions/restricted-database? database-id) false
      (db-id->router-db-id database-id) (mi/can-query? :model/Database (db-id->router-db-id database-id))
      :else (or
             ;; Has query builder access

@@ -443,6 +443,8 @@ export const createMockSettings = (
   "encryption-enabled": false,
   "mcp-apps-cors-enabled-clients": [],
   "mcp-apps-cors-custom-origins": "",
+  "mcp-restricted-database-ids": [],
+  "mcp-restricted-table-ids": [],
   "transforms-meter-locked": null,
   "mfa-enforcement": "off",
   ...opts,

@@ -20,6 +20,7 @@
    [metabase.lib-be.schema :as lib-be.schema]
    [metabase.lib.core :as lib]
    [metabase.lib.schema.common :as lib.schema.common]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.metabot.config :as metabot.config]
    [metabase.metabot.core :as metabot]
    [metabase.metabot.feedback :as metabot.feedback]
@@ -185,11 +186,12 @@
        [:semantic_queries {:optional true
                            :tool/description "Natural-language search queries as an array of strings, for example [\"how much revenue did we make\"]."}
         [:maybe [:or [:sequential ms/NonBlankString] ms/NonBlankString]]]]]
-  (let [results (metabot-search/search
-                 {:term-queries     (or (coerce-query-list term-queries) [])
-                  :semantic-queries (or (coerce-query-list semantic-queries) [])
-                  :entity-types     ["table" "metric" "model" "question" "dashboard" "collection"]
-                  :limit            (or (request/limit) 50)})]
+  (let [results (mcp-restrictions/remove-restricted-search-results
+                 (metabot-search/search
+                  {:term-queries     (or (coerce-query-list term-queries) [])
+                   :semantic-queries (or (coerce-query-list semantic-queries) [])
+                   :entity-types     ["table" "metric" "model" "question" "dashboard" "collection"]
+                   :limit            (or (request/limit) 50)}))]
     {:data        results
      :total_count (count results)}))
 
@@ -1638,9 +1640,19 @@
                            respond raise)))
               (respond (error-response (:error result) (:message result))))))))))
 
+(defn- enforce-mcp-restrictions
+  "Middleware that enforces the admin-configured MCP data restrictions for every Agent API request. The MCP server
+  dispatches its tools through these routes, so this covers MCP tool calls as well as direct Agent API clients."
+  [handler]
+  (fn [request respond raise]
+    (mcp-restrictions/with-restrictions-enforced
+      (handler request respond raise))))
+
 (def +auth
-  "Agent API authentication middleware. Supports both session-based and stateless JWT authentication."
-  (api.routes.common/wrap-middleware-for-open-api-spec-generation enforce-authentication))
+  "Agent API authentication middleware. Supports both session-based and stateless JWT authentication, and enforces the
+  MCP data restrictions."
+  (api.routes.common/wrap-middleware-for-open-api-spec-generation
+   (comp enforce-mcp-restrictions enforce-authentication)))
 
 (def +agent-api-enabled
   "Wrap routes so they may only be accessed when the Agent API is enabled."

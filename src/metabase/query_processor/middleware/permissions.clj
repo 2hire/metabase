@@ -6,6 +6,7 @@
    [metabase.lib.core :as lib]
    [metabase.lib.metadata.protocols :as lib.metadata.protocols]
    [metabase.lib.schema :as lib.schema]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.permissions.core :as perms]
    [metabase.premium-features.core :refer [defenterprise]]
    [metabase.query-permissions.core :as query-perms]
@@ -88,12 +89,34 @@
   [query :- ::lib.schema/query]
   (u/assoc-dissoc query :query-permissions/referenced-card-ids (lib/all-source-card-ids-recursive query)))
 
+(defn- native-query-strings
+  "Every native query in the preprocessed legacy `query`, at any depth: the top-level `:native` map as well as native
+  source queries of nested stages and joins. Non-string native queries (e.g. MongoDB pipelines) are printed so they can
+  still be searched for table names."
+  [query]
+  (into []
+        (comp (filter map?)
+              (keep :native)
+              (keep #(if (map? %) (:query %) %))
+              (map #(if (string? %) % (pr-str %))))
+        (tree-seq coll? seq query)))
+
+(defn- check-mcp-restrictions
+  "When the query comes from an MCP client, reject it if it reads a database or table the admin restricted, for every
+  user, admins included. Runs before the regular permission checks, which admins would pass."
+  [{database-id :database :as outer-query}]
+  (when (mcp-restrictions/enforced?)
+    (mcp-restrictions/check-query-allowed! database-id
+                                           (query-perms/query->source-table-ids outer-query)
+                                           (native-query-strings outer-query))))
+
 (mu/defn check-query-permissions*
   "Check that User with `user-id` has permissions to run `query`, or throw an exception."
   [query :- ::qp.schema/any-query]
   (if (:lib/type query)
     (recur (lib/->legacy-MBQL query))
     (let [{database-id :database :as outer-query} query]
+      (check-mcp-restrictions outer-query)
       ;; The audit DB guard must fire regardless of whether a user is bound. Public-card and static-embed
       ;; execution runs as-admin with `*current-user-id*` nil; gating this solely on `*current-user-id*` let an
       ;; run a native audit-DB query against the app DB. It fires for userland

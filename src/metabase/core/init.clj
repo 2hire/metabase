@@ -39,6 +39,7 @@
    [metabase.llm.init]
    [metabase.logger.init]
    [metabase.login-history.init]
+   [metabase.mcp-restrictions.init]
    [metabase.mcp.init]
    [metabase.metabot.init]
    [metabase.model-persistence.init]

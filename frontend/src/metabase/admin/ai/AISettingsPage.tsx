@@ -23,6 +23,7 @@ import { Divider, Flex, Stack, Switch, Tabs } from "metabase/ui";
 import { AIProviderSettingsSection } from "./AIProviderSettingsSection";
 import { EmbeddedMetabotUpsell } from "./EmbeddedMetabotUpsell";
 import { McpAppsSettings } from "./McpAppsSettings";
+import { McpRestrictedDataSettings } from "./McpRestrictedDataSettings";
 import { MetabotSettingsPanel } from "./MetabotSettingsPanel";
 
 type MetabotTabId =
@@ -108,6 +109,8 @@ export function McpSettingsPage() {
     >
       <DisabledSection disabled={!areAiFeaturesEnabled}>
         <McpAppsSettings id={MCP_SECTION_ID} />
+
+        <McpRestrictedDataSettings />
 
         <AgentApiSettingsSection disabled={!areAiFeaturesEnabled} />
       </DisabledSection>

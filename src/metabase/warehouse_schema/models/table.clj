@@ -5,6 +5,7 @@
    [metabase.audit-app.core :as audit]
    [metabase.collections.models.collection :as collection]
    [metabase.driver :as driver]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.humanization :as humanization]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
@@ -289,34 +290,36 @@
 
 (defmethod mi/can-read? :model/Table
   ;; Check if user can see this table's metadata.
-  ;; True if user has:
+  ;; True if the table is not restricted for MCP clients (when the request comes from one) and the user has:
   ;; - Data access permissions (view-data :unrestricted) and either query perms or published-collection access, OR
   ;; - Metadata management permission (manage-table-metadata :yes), OR
   ([instance]
-   (or
-    ;; Has data access permissions
-    (and (perms/user-has-permission-for-table?
-          api/*current-user-id*
-          :perms/view-data
-          :unrestricted
-          (:db_id instance)
-          (:id instance))
-         (or
-          (perms/user-has-permission-for-table?
+   (and
+    (not (mcp-restrictions/restricted-table? (:db_id instance) (:id instance)))
+    (or
+     ;; Has data access permissions
+     (and (perms/user-has-permission-for-table?
            api/*current-user-id*
-           :perms/create-queries
-           :query-builder
+           :perms/view-data
+           :unrestricted
            (:db_id instance)
            (:id instance))
-          ;; Can access via published collection (EE feature)
-          (perms/can-access-via-collection? instance)))
-    ;; Has manage-table-metadata permission (allows viewing metadata without data access)
-    (perms/user-has-permission-for-table?
-     api/*current-user-id*
-     :perms/manage-table-metadata
-     :yes
-     (:db_id instance)
-     (:id instance))))
+          (or
+           (perms/user-has-permission-for-table?
+            api/*current-user-id*
+            :perms/create-queries
+            :query-builder
+            (:db_id instance)
+            (:id instance))
+           ;; Can access via published collection (EE feature)
+           (perms/can-access-via-collection? instance)))
+     ;; Has manage-table-metadata permission (allows viewing metadata without data access)
+     (perms/user-has-permission-for-table?
+      api/*current-user-id*
+      :perms/manage-table-metadata
+      :yes
+      (:db_id instance)
+      (:id instance)))))
   ([_ pk]
    (mi/can-read? (t2/select-one :model/Table pk))))
 
@@ -327,7 +330,8 @@
   ([instance]
    (boolean
     ;; Has both view-data and create-queries permissions
-    (and (perms/user-has-permission-for-table?
+    (and (not (mcp-restrictions/restricted-table? (:db_id instance) (:id instance)))
+         (perms/user-has-permission-for-table?
           api/*current-user-id*
           :perms/view-data
           :unrestricted

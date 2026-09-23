@@ -61,6 +61,7 @@
    [clojure.string :as str]
    [metabase.activity-feed.core :as activity-feed]
    [metabase.api.common :as api]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.metabot.scope :as scope]
    [metabase.metabot.tools.entity-details :as entity-details]
    [metabase.metabot.tools.field-stats :as field-stats]
@@ -455,6 +456,7 @@
   resource (see [[check-resource-database]]). Exported for [[metabase.metabot.tools.metadata]]."
   [card-id]
   (when-let [card (api/read-check :model/Card card-id)]
+    (mcp-restrictions/check-table-allowed! (:database_id card) (:table_id card))
     (check-resource-database (:database_id card))))
 
 (defn- check-measure-or-segment-resource-database [model id]

@@ -26,6 +26,7 @@
    [metabase.app-db.core :as mdb]
    [metabase.config.core :as config]
    [metabase.initialization-status.core :as init-status]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp.core :as mcp]
    [metabase.oauth-server.core :as oauth-server]
    [metabase.premium-features.core :as premium-features]
@@ -384,6 +385,16 @@
   [request & body]
   `(request/do-with-current-user ~request (fn [] ~@body)))
 
+(def ^:private mcp-client-auth-methods
+  "Auth methods that only MCP clients use: the OAuth bearer tokens issued by the embedded OAuth server, and the scoped
+  credential of the MCP Apps visualization iframe."
+  #{"oauth" "mcp-ui"})
+
+(defn- mcp-client-request?
+  "Whether `request` was authenticated as an MCP client, so the MCP data restrictions apply to it."
+  [request]
+  (contains? mcp-client-auth-methods (:embedding/auth-method request)))
+
 (defn bind-current-user
   "Middleware that binds [[metabase.api.common/*current-user*]], [[*current-user-id*]], [[*is-superuser?*]],
   [[*current-user-permissions-set*]], and [[metabase.settings.models.setting/*user-local-values*]].
@@ -395,11 +406,16 @@
   *  `*is-superuser?*`                  Boolean stating whether current user is a superuser.
   *  `*is-group-manager?*`              Boolean stating whether current user is a group manager of at least one group.
   *  `*current-user-permissions-set*`   delay that returns the set of permissions granted to the current user from DB
-  *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user"
+  *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user
+
+  Requests authenticated as an MCP client also run with the MCP data restrictions enforced."
   [handler]
   (fn [request respond raise]
     (with-current-user-for-request request
-      (handler request respond raise))))
+      (if (mcp-client-request? request)
+        (mcp-restrictions/with-restrictions-enforced
+          (handler request respond raise))
+        (handler request respond raise)))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                         session activity tracking                                              |
