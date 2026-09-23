@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { t } from "ttag";
+import _ from "underscore";
 
 import { SettingsSection } from "metabase/admin/components/SettingsSection";
 import { useListDatabasesQuery, useListTablesQuery } from "metabase/api";
@@ -18,23 +19,25 @@ const getDatabaseOptions = (databases: Database[]) =>
     label: database.name,
   }));
 
+const getTableLabel = (table: Table) =>
+  table.schema ? `${table.schema}.${table.name}` : table.name;
+
 const getTableOptions = (tables: Table[], databases: Database[]) => {
   const databaseNames = new Map(databases.map((db) => [db.id, db.name]));
-  const groups = new Map<string, { value: string; label: string }[]>();
+  const tablesByDatabase = _.groupBy(
+    tables,
+    (table) => databaseNames.get(table.db_id) ?? String(table.db_id),
+  );
 
-  for (const table of tables) {
-    const group = databaseNames.get(table.db_id) ?? String(table.db_id);
-    const label = table.schema
-      ? `${table.schema}.${table.name}`
-      : String(table.name);
-    const items = groups.get(group) ?? [];
-    items.push({ value: String(table.id), label });
-    groups.set(group, items);
-  }
-
-  return Array.from(groups, ([group, items]) => ({
+  return Object.entries(tablesByDatabase).map(([group, groupTables]) => ({
     group,
-    items: items.sort((a, b) => a.label.localeCompare(b.label)),
+    items: _.sortBy(
+      groupTables.map((table) => ({
+        value: String(table.id),
+        label: getTableLabel(table),
+      })),
+      "label",
+    ),
   }));
 };
 
