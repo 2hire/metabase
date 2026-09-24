@@ -59,6 +59,8 @@
                   (when (seq excluded-ids)
                     (t2/select [:model/Field :id :name :table_id] :id [:in excluded-ids])))}))
 
+(def ^:private max-audit-log-page-size 200)
+
 (api.macros/defendpoint :get "/audit-log"
   :- [:map
       [:total   ms/IntGreaterThanOrEqualToZero]
@@ -67,16 +69,16 @@
       [:methods [:sequential :string]]
       [:data    [:sequential :map]]]
   "The requests MCP clients made to the MCP server, newest first, optionally filtered by user, JSON-RPC method and
-  outcome. Also returns the methods that appear in the log, for filtering."
+  outcome. Also returns the methods entries can have, for filtering."
   [_route-params
    {:keys [user-id method status]} :- [:map
                                        [:user-id {:optional true} [:maybe ms/PositiveInt]]
                                        [:method  {:optional true} [:maybe ms/NonBlankString]]
                                        [:status  {:optional true} [:maybe (into [:enum] audit-log/statuses)]]]]
   (api/check-superuser)
-  (let [limit  (or (request/limit) 50)
+  (let [limit  (min (or (request/limit) 50) max-audit-log-page-size)
         offset (or (request/offset) 0)]
     (merge {:limit   limit
             :offset  offset
-            :methods (audit-log/distinct-methods)}
+            :methods audit-log/all-methods}
            (audit-log/list-entries {:user-id user-id :method method :status status} limit offset))))

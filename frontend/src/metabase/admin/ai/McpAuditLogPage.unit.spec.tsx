@@ -1,6 +1,7 @@
+import type { Row, Table } from "@tanstack/react-table";
 import userEvent from "@testing-library/user-event";
 import fetchMock from "fetch-mock";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { Route } from "react-router";
 
 import {
@@ -8,38 +9,53 @@ import {
   setupUsersEndpoints,
 } from "__support__/server-mocks";
 import { renderWithProviders, screen, waitFor, within } from "__support__/ui";
-import type { ListMcpAuditLogResponse } from "metabase-types/api";
+import type {
+  ListMcpAuditLogResponse,
+  McpAuditLogEntry,
+  UserListResult,
+} from "metabase-types/api";
 import {
   createMockListMcpAuditLogResponse,
   createMockMcpAuditLogEntry,
-  createMockUserListResult,
+  createMockUser,
 } from "metabase-types/api/mocks";
 
 import { MCP_AUDIT_LOG_PAGE_SIZE, McpAuditLogPage } from "./McpAuditLogPage";
 
 // TreeTable virtualizes its rows, which renders nothing in jsdom. Mock it to
-// render each row's cells via flexRender so the column cell logic is exercised.
+// render each row's cells via flexRender so the column cell logic is exercised,
+// and to forward key presses to the instance's keyboard handler like the real one.
 jest.mock("metabase/ui/components/data-display/TreeTable/TreeTable", () => {
   const { flexRender } = jest.requireActual("@tanstack/react-table");
   return {
     TreeTable: ({
       instance,
       emptyState,
+      ariaLabel,
       onRowClick,
     }: {
-      instance: { table: { getRowModel: () => { rows: any[] } } };
+      instance: {
+        table: Table<McpAuditLogEntry>;
+        handleKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
+      };
       emptyState: ReactNode;
-      onRowClick?: (row: any) => void;
+      ariaLabel?: string;
+      onRowClick?: (row: Row<McpAuditLogEntry>) => void;
     }) => {
       const rows = instance.table.getRowModel().rows;
       if (rows.length === 0) {
         return <div>{emptyState}</div>;
       }
       return (
-        <div>
+        <div
+          role="treegrid"
+          tabIndex={0}
+          aria-label={ariaLabel}
+          onKeyDown={instance.handleKeyDown}
+        >
           {rows.map((row) => (
             <div key={row.id} role="row" onClick={() => onRowClick?.(row)}>
-              {row.getVisibleCells().map((cell: any) => (
+              {row.getVisibleCells().map((cell) => (
                 <span key={cell.id}>
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </span>
@@ -57,21 +73,28 @@ const PATHNAME = "/admin/metabot/mcp/audit-log";
 const setup = ({
   response = createMockListMcpAuditLogResponse(),
   error = false,
+  users = [createMockUser()],
 }: {
   response?: ListMcpAuditLogResponse;
   error?: boolean;
+  users?: UserListResult[];
 } = {}) => {
   if (error) {
     fetchMock.get("path:/api/mcp-restrictions/audit-log", { status: 500 });
   } else {
     setupMcpAuditLogEndpoint(response);
   }
-  setupUsersEndpoints([createMockUserListResult()]);
+  setupUsersEndpoints(users);
 
   return renderWithProviders(
     <Route path={PATHNAME} component={McpAuditLogPage} />,
     { withRouter: true, initialRoute: PATHNAME },
   );
+};
+
+const lastUsersCallUrl = () => {
+  const calls = fetchMock.callHistory.calls("path:/api/user");
+  return calls[calls.length - 1]?.url ?? "";
 };
 
 const lastCallUrl = () => {
@@ -171,6 +194,104 @@ describe("McpAuditLogPage", () => {
 
     await waitFor(() => {
       expect(lastCallUrl()).toContain("method=tools%2Flist");
+    });
+  });
+
+  it("doesn't crash when a logged method looks like the filters' sentinel value", async () => {
+    setup({
+      response: createMockListMcpAuditLogResponse({
+        methods: ["all", "tools/call", "tools/call"],
+      }),
+    });
+
+    await screen.findByTestId("mcp-audit-log-table");
+    await userEvent.click(screen.getByLabelText("Filter by method"));
+    expect(
+      await screen.findByRole("option", { name: "All methods" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "tools/call" })).toHaveLength(
+      1,
+    );
+    await userEvent.click(screen.getByRole("option", { name: "all" }));
+
+    await waitFor(() => {
+      expect(lastCallUrl()).toContain("method=all");
+    });
+  });
+
+  it.each([
+    ["session", "Session"],
+    ["api-key", "API key"],
+    ["oauth", "OAuth token"],
+    ["mcp-ui", "MCP Apps iframe"],
+  ] as const)(
+    "shows the %s authentication method in the details",
+    async (authMethod, label) => {
+      setup({
+        response: createMockListMcpAuditLogResponse({
+          data: [createMockMcpAuditLogEntry({ auth_method: authMethod })],
+        }),
+      });
+
+      await userEvent.click(await screen.findByRole("row"));
+
+      const details = await screen.findByTestId("mcp-audit-log-details");
+      expect(within(details).getByText(label)).toBeInTheDocument();
+    },
+  );
+
+  it("opens the details of a request from the keyboard", async () => {
+    setup({
+      response: createMockListMcpAuditLogResponse({
+        data: [
+          createMockMcpAuditLogEntry({
+            status: "error",
+            error_message: "Unknown tool: nope",
+          }),
+        ],
+      }),
+    });
+
+    const grid = await screen.findByRole("treegrid", {
+      name: "MCP audit log",
+    });
+    grid.focus();
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+
+    const details = await screen.findByTestId("mcp-audit-log-details");
+    expect(within(details).getByText("Unknown tool: nope")).toBeInTheDocument();
+  });
+
+  it("offers deactivated users in the user filter", async () => {
+    setup({
+      users: [
+        createMockUser({
+          id: 1,
+          common_name: "Active Person",
+          email: "active@example.com",
+        }),
+        createMockUser({
+          id: 2,
+          common_name: "Gone Person",
+          email: "gone@example.com",
+          is_active: false,
+        }),
+      ],
+    });
+
+    await screen.findByTestId("mcp-audit-log-table");
+    await waitFor(() => {
+      expect(lastUsersCallUrl()).toContain("status=all");
+    });
+    await userEvent.click(screen.getByLabelText("Filter by user"));
+    await userEvent.click(
+      await screen.findByRole("option", {
+        name: "Gone Person (gone@example.com) (deactivated)",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(lastCallUrl()).toContain("user-id=2");
     });
   });
 });

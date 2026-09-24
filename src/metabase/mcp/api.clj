@@ -122,55 +122,93 @@
 
 ;;; ------------------------------------------------- Audit log ----------------------------------------------------
 
-(defn- audited-method?
-  "Whether a JSON-RPC call with `method` goes in the MCP audit log. Keepalive pings and client notifications don't."
-  [method]
-  (and (string? method)
+(def ^:private known-methods
+  "The JSON-RPC methods [[dispatch-request*]] runs whether or not the message has an id."
+  #{"initialize" "tools/list" "tools/call" "resources/list" "resources/read"})
+
+(defn- audited-message?
+  "Whether a JSON-RPC message goes in the MCP audit log. Keepalive pings and client notifications don't, and neither do
+  messages without an id for a method the server doesn't know, which it ignores."
+  [{:keys [id method] :as msg}]
+  (and (map? msg)
        (not= method "ping")
-       (not (str/starts-with? method "notifications/"))))
+       (not (and (string? method) (str/starts-with? method "notifications/")))
+       (or (some? id) (contains? known-methods method))))
+
+(defn- audit-auth-method
+  "How a `request` the session middleware authenticated did it, as recorded in the MCP audit log: session cookie, API
+  key or OAuth access token."
+  [request]
+  (or (:metabase-credential request) :session))
 
 (defn- audit-context
   "The parts of an MCP HTTP request every audit log entry for it shares."
   [user-id request]
   {:user-id     user-id
    :auth-method (:mcp-auth-method request)
+   :session-id  (get-in request [:headers "mcp-session-id"])
    :ip-address  (request/ip-address request)
    :user-agent  (get-in request [:headers "user-agent"])})
 
 (defn- audit-target [method params]
-  (case method
-    "tools/call"     (:name params)
-    "resources/read" (:uri params)
-    "initialize"     (get-in params [:clientInfo :name])
-    nil))
+  (when (map? params)
+    (case method
+      "tools/call"     (:name params)
+      "resources/read" (:uri params)
+      "initialize"     (get-in params [:clientInfo :name])
+      nil)))
 
 (defn- audit-arguments [method params]
-  (case method
-    "tools/call" (:arguments params)
-    "initialize" (select-keys params [:protocolVersion :clientInfo])
-    nil))
+  (when (map? params)
+    (case method
+      "tools/call" (:arguments params)
+      "initialize" (select-keys params [:protocolVersion :clientInfo])
+      nil)))
 
 (defn- response-error
   "The error message a JSON-RPC `response` carries, or nil when it succeeded. Tool failures come back as a result with
-  `isError`, not as a JSON-RPC error."
+  `isError`, not as a JSON-RPC error; failed queries carry their error in the structured content."
   [response]
   (or (get-in response [:error :message])
       (when (get-in response [:result :isError])
-        (or (not-empty (str/join "\n" (keep :text (get-in response [:result :content]))))
-            "Tool call failed"))))
+        (let [structured-error (get-in response [:result :structuredContent :error])]
+          (or (when (string? structured-error) (not-empty structured-error))
+              (not-empty (str/join "\n" (keep :text (get-in response [:result :content]))))
+              "Tool call failed")))))
+
+(defn- record-message!
+  "Record a JSON-RPC message in the MCP audit log with the outcome in `entry` (`:status`, and optionally
+  `:error-message` and `:duration-ms`). Never throws."
+  [audit-ctx {:keys [method params] :as msg} entry]
+  (try
+    (mcp.audit-log/record! (merge audit-ctx
+                                  {:method    (when (map? msg) method)
+                                   :target    (audit-target method params)
+                                   :arguments (audit-arguments method params)}
+                                  entry))
+    (catch Throwable e
+      (log/warn e "Failed to record an MCP request in the audit log"))))
 
 (defn- record-call!
   "Record a JSON-RPC call and the response it got in the MCP audit log."
-  [audit-ctx session-id {:keys [method params]} response started-at]
+  [audit-ctx msg response started-at]
   (let [error-message (response-error response)]
-    (mcp.audit-log/record! (assoc audit-ctx
-                                  :session-id    session-id
-                                  :method        method
-                                  :target        (audit-target method params)
-                                  :arguments     (audit-arguments method params)
-                                  :status        (if error-message "error" "success")
-                                  :error-message error-message
-                                  :duration-ms   (u/since-ms started-at)))))
+    (record-message! audit-ctx msg {:status        (if error-message "error" "success")
+                                    :error-message error-message
+                                    :duration-ms   (u/since-ms started-at)})))
+
+(defn- record-refused!
+  "Record the JSON-RPC calls in a POST `body` that were refused before being dispatched, each with `status` and
+  `message`. A body that is neither an object nor an array is recorded once, as an `other` call."
+  [audit-ctx body status message]
+  (let [body     (walk/keywordize-keys body)
+        messages (cond
+                   (sequential? body) body
+                   (map? body)        [body]
+                   :else              [nil])]
+    (doseq [msg messages
+            :when (or (nil? msg) (audited-message? msg))]
+      (record-message! audit-ctx msg {:status status :error-message message}))))
 
 (defn- dispatch-request
   "Dispatch a single JSON-RPC request and record it in the MCP audit log. Returns a response map or nil for
@@ -180,8 +218,8 @@
   ([msg session-id token-scopes audit-ctx]
    (let [started-at (u/start-timer)
          response   (dispatch-request* msg session-id token-scopes)]
-     (when (and audit-ctx (audited-method? (:method msg)))
-       (record-call! audit-ctx session-id msg response started-at))
+     (when (and audit-ctx (audited-message? msg))
+       (record-call! (assoc audit-ctx :session-id session-id) msg response started-at))
      response)))
 
 ;;; ----------------------------------------------------- SSE ------------------------------------------------------
@@ -276,26 +314,43 @@
 
 ;;; -------------------------------------------------- Handlers ---------------------------------------------------
 
+(def ^:private max-batch-size
+  "The most JSON-RPC messages one POST may carry. The throttle counts HTTP requests, so without a cap one request could
+  run and record any number of calls."
+  100)
+
+(defn- refuse-post
+  "Record the calls in a POST that is refused before dispatch, and return the `error` response."
+  [audit-ctx body error]
+  (record-refused! audit-ctx body "error" (some-> (:body error) json/decode+kw :error :message))
+  error)
+
 (defn- handle-post
   "Handle a POST request containing one or more JSON-RPC messages."
   [user-id request]
   (let [body       (walk/keywordize-keys (:body request))
         session-id (get-in request [:headers "mcp-session-id"])
-        batch?     (sequential? body)]
+        batch?     (sequential? body)
+        audit-ctx  (audit-context user-id request)]
     (cond
       (nil? body)
-      (json-response 400 (jsonrpc-error nil -32700 "Parse error: empty body"))
+      (refuse-post audit-ctx body (json-response 400 (jsonrpc-error nil -32700 "Parse error: empty body")))
 
       (and (not (map? body)) (not batch?))
-      (json-response 400 (jsonrpc-error nil -32600 "Invalid request: expected object or array"))
+      (refuse-post audit-ctx body (json-response 400 (jsonrpc-error nil -32600 "Invalid request: expected object or array")))
 
       ;; JSON-RPC 2.0: empty batch is invalid
       (and batch? (empty? body))
       (json-response 400 (jsonrpc-error nil -32600 "Invalid request: empty batch"))
 
+      (and batch? (> (count body) max-batch-size))
+      (refuse-post audit-ctx (take max-batch-size body)
+                   (json-response 400 (jsonrpc-error nil -32600 (str "Invalid request: a batch can hold at most "
+                                                                     max-batch-size " messages"))))
+
       ;; MCP spec: "The initialize request MUST NOT be part of a JSON-RPC batch"
       (and batch? (some #(= "initialize" (:method %)) body))
-      (json-response 400 (jsonrpc-error nil -32600 "initialize must not be batched"))
+      (refuse-post audit-ctx body (json-response 400 (jsonrpc-error nil -32600 "initialize must not be batched")))
 
       ;; Initialize: create session and return response with session header
       (and (not batch?) (= "initialize" (:method body)))
@@ -305,7 +360,7 @@
             session-id       (mcp.session/create! user-id {:supports-mcp-ui?
                                                            supports-mcp-ui?})
             init-response (handle-initialize (:id body) (:params body))]
-        (record-call! (audit-context user-id request) session-id body init-response started-at)
+        (record-call! (assoc audit-ctx :session-id session-id) body init-response started-at)
         (if (accepts-sse? request)
           (sse-response [init-response] {"Mcp-Session-Id" session-id})
           (json-response 200 init-response {"Mcp-Session-Id" session-id})))
@@ -314,9 +369,8 @@
       :else
       (let [{:keys [error]} (require-valid-session user-id session-id)]
         (if error
-          error
+          (refuse-post audit-ctx body error)
           (let [messages  (if batch? body [body])
-                audit-ctx (audit-context user-id request)
                 responses (into [] (keep #(dispatch-request % session-id (:token-scopes request) audit-ctx)) messages)]
             (cond
               (empty? responses)
@@ -402,19 +456,32 @@
 
 ;;; ---------------------------------------------------- Handler ---------------------------------------------------
 
+(def ^:private throttle-recorded-at
+  "When a throttled request was last recorded in the MCP audit log, by user ID. A throttled client keeps retrying, so
+  only the first refusal per throttle window is recorded."
+  (atom {}))
+
+(defn- record-throttled!
+  "Record a request refused by the throttle in the MCP audit log, at most once per user per throttle window."
+  [user-id request throttle-err]
+  (let [now      (System/currentTimeMillis)
+        [old _]  (swap-vals! throttle-recorded-at
+                             (fn [recorded]
+                               (if (< (- now (get recorded user-id 0)) one-minute-ms)
+                                 recorded
+                                 (assoc recorded user-id now))))]
+    (when (>= (- now (get old user-id 0)) one-minute-ms)
+      (record-refused! (audit-context user-id request)
+                       (when (= :post (:request-method request)) (:body request))
+                       "error"
+                       (some-> (:body throttle-err) json/decode+kw :error :message)))))
+
 (defn- record-access-denied!
-  "Record a request the MCP access list refused in the MCP audit log."
+  "Record the JSON-RPC calls of a POST the MCP access list refused in the MCP audit log. The SSE stream (GET) and
+  session teardown (DELETE) aren't calls and are left out, as when they're allowed."
   [user-id request message]
-  (let [body   (:body request)
-        method (cond
-                 (map? body)        (or (get body "method") (get body :method))
-                 (sequential? body) "batch"
-                 :else              (str "http/" (u/lower-case-en (name (:request-method request)))))]
-    (mcp.audit-log/record! (assoc (audit-context user-id request)
-                                  :session-id    (get-in request [:headers "mcp-session-id"])
-                                  :method        method
-                                  :status        "denied"
-                                  :error-message message))))
+  (when (= :post (:request-method request))
+    (record-refused! (audit-context user-id request) (:body request) "denied" message)))
 
 ;; Source of truth for the route aliases — keep in sync with the route-map in
 ;; [[metabase.api-routes.routes]] and resource-metadata endpoints in [[metabase.oauth-server.api.metadata]].
@@ -449,10 +516,11 @@
            token-scopes (:token-scopes request)]
        (letfn [(dispatch [user-id token-scopes auth-method]
                  (request/with-current-user user-id
-                   (if-let [throttle-err (check-throttle user-id)]
-                     (respond throttle-err)
-                     (try
-                       (let [request (assoc request :token-scopes token-scopes :mcp-auth-method auth-method)]
+                   (let [request (assoc request :token-scopes token-scopes :mcp-auth-method auth-method)]
+                     (if-let [throttle-err (check-throttle user-id)]
+                       (do (record-throttled! user-id request throttle-err)
+                           (respond throttle-err))
+                       (try
                          (cond
                            (not (mcp-restrictions/user-allowed? user-id))
                            (let [message (mcp-restrictions/access-denied-message)]
@@ -469,9 +537,9 @@
                            (respond (handle-delete user-id request))
 
                            :else
-                           (respond (json-response 405 (jsonrpc-error nil -32600 "Method not allowed")))))
-                       (catch Throwable e
-                         (raise e))))))]
+                           (respond (json-response 405 (jsonrpc-error nil -32600 "Method not allowed"))))
+                         (catch Throwable e
+                           (raise e)))))))]
          (cond
            (some? origin-error)
            (respond origin-error)
@@ -479,7 +547,7 @@
            ;; Respect the scope set attached to an authenticated request. Sessions without one
            ;; retain unrestricted access.
            session-auth
-           (dispatch session-auth (or token-scopes #{::scope/unrestricted}) :session)
+           (dispatch session-auth (or token-scopes #{::scope/unrestricted}) (audit-auth-method request))
 
            ;; Bearer token auth — validate and extract scopes
            bearer-token

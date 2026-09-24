@@ -83,7 +83,6 @@
     :model/DatabaseRouter
     :model/Dependency
     :model/DependencyStatus
-    :model/McpAuditLog
     :model/McpQueryHandle
     :model/MetabotConversation
     :model/MetabotGroupLimit

@@ -26,16 +26,30 @@ export type McpSensitiveFieldsResponse = {
 
 export type McpAuditLogStatus = "success" | "error" | "denied";
 
+/** The credential a recorded request authenticated with. */
+export type McpAuditLogAuthMethod =
+  | "session"
+  | "api-key"
+  | "oauth"
+  | "mcp-ui"
+  | "jwt";
+
 /** One request an MCP client made to the MCP server. */
 export type McpAuditLogEntry = {
   id: number;
   created_at: string;
   user_id: number | null;
   mcp_session_id: string | null;
-  auth_method: "oauth" | "session";
-  /** JSON-RPC method, e.g. `tools/call`. */
+  auth_method: McpAuditLogAuthMethod;
+  /**
+   * JSON-RPC method (e.g. `tools/call`), `other` for an unknown JSON-RPC method, or `http/<verb>` for a REST or
+   * Agent API call an AI client made directly.
+   */
   method: string;
-  /** Tool name, resource URI or client name, depending on the method. */
+  /**
+   * Tool name, resource URI or client name depending on the JSON-RPC method, the raw method for `other`, or the
+   * request URI for `http/<verb>`.
+   */
   target: string | null;
   /** JSON-encoded arguments, with secrets masked; may be truncated. */
   arguments: string | null;
@@ -57,6 +71,6 @@ export type ListMcpAuditLogRequest = {
 
 export type ListMcpAuditLogResponse = {
   data: McpAuditLogEntry[];
-  /** The methods that appear in the log, for filtering. */
+  /** The methods an entry can have, for filtering. */
   methods: string[];
 } & PaginationResponse;

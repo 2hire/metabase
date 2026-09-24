@@ -119,10 +119,12 @@ export function McpSettingsPage() {
 
         <McpSensitiveFieldsSettings />
 
-        <McpAuditLogSettings />
-
         <AgentApiSettingsSection disabled={!areAiFeaturesEnabled} />
       </DisabledSection>
+
+      {/* Outside the disabled section: the nightly purge applies the retention and the recorded entries stay
+          readable even with AI features turned off. */}
+      <McpAuditLogSettings />
     </SettingsPageWrapper>
   );
 }

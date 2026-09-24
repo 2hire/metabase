@@ -2,12 +2,15 @@
   "Audit trail of the requests MCP clients make to the MCP server, stored in `mcp_audit_log`. It has its own table,
   rather than going through `audit_log`, so it works without the audit-app premium feature.
 
-  The MCP transport calls [[record!]] once per JSON-RPC call and once per request the access list refuses. Recording
-  never fails the request it describes: errors are logged and swallowed."
+  The MCP transport calls [[record!]] once per JSON-RPC call, including the calls it refuses before dispatching them
+  (access list, session, throttling). The session middleware calls it for the REST and Agent API requests AI clients
+  make directly, and for the ones it refuses. Recording never fails or delays the request it describes: entries are
+  inserted in the background, and errors are logged and swallowed."
   (:require
    [clojure.string :as str]
    [clojure.walk :as walk]
    [java-time.api :as t]
+   [metabase.batch-processing.core :as grouper]
    [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp-restrictions.settings :as mcp-restrictions.settings]
    [metabase.util.json :as json]
@@ -20,6 +23,27 @@
   "The outcomes a recorded request can have."
   #{"success" "error" "denied"})
 
+(def auth-methods
+  "How the client of a recorded request authenticated: a session cookie, an API key, an OAuth access token, the scoped
+  credential of the MCP Apps iframe, or an Agent API JWT."
+  #{"session" "api-key" "oauth" "mcp-ui" "jwt"})
+
+(def jsonrpc-methods
+  "The JSON-RPC methods recorded under their own name. Anything else a client sends is recorded as `other`, with the
+  method it sent as the target, so what clients send can't grow the set of methods to filter by."
+  ["initialize" "tools/list" "tools/call" "resources/list" "resources/read"])
+
+(def http-methods
+  "The methods of the REST and Agent API requests AI clients make directly, rather than through the MCP server. Their
+  target is the request URI."
+  ["http/get" "http/post" "http/put" "http/patch" "http/delete"])
+
+(def all-methods
+  "Every method an entry can have, for filtering."
+  (vec (concat jsonrpc-methods ["other"] http-methods)))
+
+(def ^:private method-set (set all-methods))
+
 (def ^:private max-arguments-length 10000)
 (def ^:private max-error-length 2000)
 (def ^:private max-short-text-length 254)
@@ -31,56 +55,120 @@
         (str (subs s 0 (dec max-length)) "…")
         s))))
 
+(defn- clean-text
+  "`s` as a string that fits in a column of `max-length` characters, without NUL characters (which Postgres can't store
+  in text columns) and with anything that looks like a secret masked."
+  [s max-length]
+  (when (some? s)
+    (-> (str s)
+        (str/replace "\u0000" "")
+        mcp-restrictions/mask-secret-like-value
+        (truncate max-length))))
+
+(defn- key-name
+  "The full name of map key `k`, namespace included: `json/decode+kw` turns `\"password/new\"` into `:password/new`."
+  [k]
+  (cond
+    (keyword? k) (subs (str k) 1)
+    (string? k)  k))
+
 (defn- mask-secrets
-  "Replace the value of every map entry whose key looks like it holds a secret (see
-  [[mcp-restrictions/secret-name?]]), at any depth."
+  "Replace the value of every map entry whose key looks like it holds a secret (see [[mcp-restrictions/secret-name?]]),
+  and anything that looks like a secret inside the other strings (see [[mcp-restrictions/mask-secret-like-value]]), at
+  any depth."
   [x]
   (walk/postwalk
    (fn [form]
-     (if (map? form)
+     (cond
+       (map? form)
        (into (empty form)
              (map (fn [[k v]]
-                    [k (if (and (or (keyword? k) (string? k))
-                                (mcp-restrictions/secret-name? (name k)))
+                    [k (if (some-> (key-name k) mcp-restrictions/secret-name?)
                          mcp-restrictions/masked-value
                          v)]))
              form)
+
+       (string? form)
+       (mcp-restrictions/mask-secret-like-value form)
+
+       :else
        form))
    x))
 
 (defn sanitize-arguments
-  "JSON-encode request `arguments` for the audit log, with secret-looking keys masked and the result truncated. Returns
-  nil when there are no arguments."
+  "JSON-encode request `arguments` for the audit log, with secrets masked and the result truncated. Returns nil when
+  there are no arguments."
   [arguments]
   (when (and (some? arguments)
              (not (and (coll? arguments) (empty? arguments))))
     (truncate (json/encode (mask-secrets arguments)) max-arguments-length)))
 
-(defn record!
-  "Record one MCP request in the audit log. `entry` has `:user-id`, `:auth-method` (`:oauth` or `:session`),
-  `:method` and `:status` (one of [[statuses]]), and optionally `:session-id`, `:target`, `:arguments` (any
-  JSON-encodable value), `:error-message`, `:duration-ms`, `:ip-address` and `:user-agent`. No-op when the audit log
-  is turned off. Never throws."
+(defn- entry->row
   [{:keys [user-id session-id auth-method method target arguments status error-message duration-ms ip-address
            user-agent]}]
-  (when (mcp-restrictions.settings/mcp-audit-log-enabled?)
-    (try
-      (t2/insert! :model/McpAuditLog
-                  {:user_id        user-id
-                   :mcp_session_id (truncate session-id max-short-text-length)
-                   :auth_method    (name (or auth-method :session))
-                   :method         (truncate (or method "unknown") 64)
-                   :target         (truncate target max-short-text-length)
-                   :arguments      (sanitize-arguments arguments)
-                   :status         status
-                   :error_message  (truncate error-message max-error-length)
-                   :duration_ms    (some-> duration-ms int)
-                   :ip_address     (truncate ip-address 64)
-                   :user_agent     (truncate user-agent max-short-text-length)})
-      nil
-      (catch Throwable e
-        (log/warnf e "Failed to record MCP request %s in the audit log" method)
-        nil))))
+  (let [method       (some-> method str)
+        known?       (contains? method-set method)
+        duration-ms  (some-> duration-ms long)
+        auth-method  (some-> auth-method name)]
+    {:created_at     (cond-> (t/offset-date-time)
+                       ;; when the request was received, not when it was answered
+                       duration-ms (t/minus (t/millis duration-ms)))
+     :user_id        user-id
+     :mcp_session_id (clean-text session-id max-short-text-length)
+     :auth_method    (if (contains? auth-methods auth-method) auth-method "session")
+     :method         (if known? method "other")
+     :target         (clean-text (if known? target (or method target)) max-short-text-length)
+     :arguments      (sanitize-arguments arguments)
+     :status         (if (contains? statuses status) status "error")
+     :error_message  (clean-text error-message max-error-length)
+     :duration_ms    (some-> duration-ms (min Integer/MAX_VALUE) int)
+     :ip_address     (clean-text ip-address 64)
+     :user_agent     (clean-text user-agent max-short-text-length)}))
+
+(defn- insert-rows!
+  "Insert a batch of audit log rows. When the batch fails, retry one row at a time so a single bad row doesn't lose
+  the others."
+  [rows]
+  (try
+    (t2/insert! :model/McpAuditLog rows)
+    (catch Throwable e
+      (log/warnf e "Failed to record %d MCP requests in the audit log, retrying them one at a time" (count rows))
+      (doseq [row rows]
+        (try
+          (t2/insert! :model/McpAuditLog row)
+          (catch Throwable e
+            (log/warnf e "Failed to record MCP request %s in the audit log" (:method row))))))))
+
+(def ^:private queue-capacity 1000)
+(def ^:private queue-interval-ms 1000)
+
+(defonce ^:private queue
+  (delay (grouper/start! #'insert-rows!
+                         :capacity queue-capacity
+                         :interval queue-interval-ms)))
+
+(defn record!
+  "Record one MCP request in the audit log. `entry` has `:user-id`, `:auth-method` (one of [[auth-methods]]),
+  `:method` and `:status` (one of [[statuses]]), and optionally `:session-id`, `:target`, `:arguments` (any
+  JSON-encodable value), `:error-message`, `:duration-ms`, `:ip-address` and `:user-agent`. A method not in
+  [[all-methods]] is recorded as `other`, with the method as the target.
+
+  Entries are inserted in batches in the background, so they show up in the log up to a second later and are lost on
+  a non-graceful shutdown; requests don't wait on the app DB for it. No-op when the audit log is turned off. Never
+  throws."
+  [entry]
+  (try
+    (when (mcp-restrictions.settings/mcp-audit-log-enabled?)
+      (grouper/submit! @queue (entry->row entry)))
+    nil
+    (catch Throwable e
+      (log/warnf e "Failed to record MCP request %s in the audit log" (:method entry))
+      nil)))
+
+(defn flush!
+  "Block until every entry recorded so far is in the app DB."
+  []
+  (grouper/flush! @queue))
 
 ;;; ------------------------------------------------------ Reading -------------------------------------------------
 
@@ -115,14 +203,6 @@
                           where (assoc :where where)))]
     {:total (or total 0)
      :data  (mapv #(into {} %) rows)}))
-
-(defn distinct-methods
-  "The JSON-RPC methods that appear in the audit log, for filtering."
-  []
-  (->> (t2/query {:select-distinct [:method] :from [:mcp_audit_log] :order-by [[:method :asc]]})
-       (map :method)
-       (remove str/blank?)
-       vec))
 
 ;;; ----------------------------------------------------- Retention ------------------------------------------------
 

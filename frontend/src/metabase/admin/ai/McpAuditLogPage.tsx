@@ -5,7 +5,6 @@ import { t } from "ttag";
 import NoResults from "assets/img/no_results.svg";
 import { SettingsPageWrapper } from "metabase/admin/components/SettingsSection";
 import { useListMcpAuditLogQuery, useListUsersQuery } from "metabase/api";
-import { DateTime } from "metabase/common/components/DateTime";
 import { EmptyState } from "metabase/common/components/EmptyState";
 import { DelayedLoadingAndErrorWrapper } from "metabase/common/components/LoadingAndErrorWrapper/DelayedLoadingAndErrorWrapper";
 import { PaginationControls } from "metabase/common/components/PaginationControls";
@@ -15,7 +14,6 @@ import {
   getFirstParamValue,
   useUrlState,
 } from "metabase/common/hooks/use-url-state";
-import CS from "metabase/css/core/index.css";
 import {
   Badge,
   Box,
@@ -32,15 +30,20 @@ import {
   useTreeTableInstance,
 } from "metabase/ui";
 import type { MetabaseColorKey } from "metabase/ui/colors/types";
+import MetabaseSettings from "metabase/utils/settings";
+import { formatDateTimeWithUnit } from "metabase/visualizations/lib/formatting";
 import type {
   McpAuditLogEntry,
   McpAuditLogStatus,
-  UserListResult,
+  User,
 } from "metabase-types/api";
 
 export const MCP_AUDIT_LOG_PAGE_SIZE = 50;
 
+// Users and methods come from the server, so their option values get a prefix that the sentinel can't collide with.
 const ALL = "all";
+const USER_OPTION_PREFIX = "user:";
+const METHOD_OPTION_PREFIX = "method:";
 
 const STATUSES: McpAuditLogStatus[] = ["success", "error", "denied"];
 
@@ -60,6 +63,32 @@ const getStatusLabel = (status: McpAuditLogStatus) => {
       return t`Denied`;
   }
 };
+
+const getAuthMethodLabel = (authMethod: string) => {
+  switch (authMethod) {
+    case "session":
+      return t`Session`;
+    case "api-key":
+      return t`API key`;
+    case "oauth":
+      return t`OAuth token`;
+    case "mcp-ui":
+      return t`MCP Apps iframe`;
+    case "jwt":
+      return t`Agent API JWT`;
+    default:
+      return authMethod;
+  }
+};
+
+const getMethodLabel = (method: string) =>
+  method === "other" ? t`Other` : method;
+
+const formatTimestamp = (value: string) =>
+  formatDateTimeWithUnit(value, "minute", {
+    ...MetabaseSettings.formattingOptions(),
+    time_enabled: "seconds",
+  });
 
 const isStatus = (value: string): value is McpAuditLogStatus =>
   STATUSES.some((status) => status === value);
@@ -96,8 +125,15 @@ function parseStatus(param: QueryParam): McpAuditLogStatus | null {
   return value && isStatus(value) ? value : null;
 }
 
-const getUserLabel = (user: UserListResult) =>
-  user.common_name ? `${user.common_name} (${user.email})` : user.email;
+const getUserLabel = (user: User) => {
+  const label = user.common_name
+    ? `${user.common_name} (${user.email})`
+    : user.email;
+  return user.is_active ? label : t`${label} (deactivated)`;
+};
+
+const withoutPrefix = (value: string | null, prefix: string) =>
+  value?.startsWith(prefix) ? value.slice(prefix.length) : null;
 
 const getEntryUserLabel = (entry: McpAuditLogEntry) => {
   const name = [entry.user_first_name, entry.user_last_name]
@@ -125,16 +161,17 @@ export const McpAuditLogPage = ({ location }: WithRouterProps) => {
     },
     { refetchOnMountOrArgChange: true },
   );
-  const { data: usersResponse } = useListUsersQuery();
+  // Deactivated users keep their audit log entries, so they can be filtered on too.
+  const { data: usersResponse } = useListUsersQuery({ status: "all" });
 
   const entries = data?.data ?? [];
   const total = data?.total ?? 0;
-  const methods = data?.methods ?? [];
+  const methods = useMemo(() => [...new Set(data?.methods ?? [])], [data]);
 
   const userOptions = useMemo(
     () =>
       (usersResponse?.data ?? []).map((user) => ({
-        value: String(user.id),
+        value: `${USER_OPTION_PREFIX}${user.id}`,
         label: getUserLabel(user),
       })),
     [usersResponse],
@@ -143,7 +180,7 @@ export const McpAuditLogPage = ({ location }: WithRouterProps) => {
   return (
     <SettingsPageWrapper
       title={t`MCP audit log`}
-      description={t`Every request MCP clients made to the MCP server: the tools they called, the resources they read, and the requests the access list refused.`}
+      description={t`Every request MCP clients made: the tools they called, the resources they read, the API calls they made directly, and the requests that were refused.`}
       h="100%"
       mih={0}
       w="100%"
@@ -154,25 +191,26 @@ export const McpAuditLogPage = ({ location }: WithRouterProps) => {
       <Group gap="sm">
         <Select
           data={[{ value: ALL, label: t`All users` }, ...userOptions]}
-          value={userId == null ? ALL : String(userId)}
-          onChange={(value) =>
-            patchUrlState({
-              userId: value && value !== ALL ? Number(value) : null,
-              page: 0,
-            })
-          }
+          value={userId == null ? ALL : `${USER_OPTION_PREFIX}${userId}`}
+          onChange={(value) => {
+            const id = withoutPrefix(value, USER_OPTION_PREFIX);
+            patchUrlState({ userId: id ? Number(id) : null, page: 0 });
+          }}
           searchable
           aria-label={t`Filter by user`}
         />
         <Select
           data={[
             { value: ALL, label: t`All methods` },
-            ...methods.map((value) => ({ value, label: value })),
+            ...methods.map((value) => ({
+              value: `${METHOD_OPTION_PREFIX}${value}`,
+              label: getMethodLabel(value),
+            })),
           ]}
-          value={method ?? ALL}
+          value={method == null ? ALL : `${METHOD_OPTION_PREFIX}${method}`}
           onChange={(value) =>
             patchUrlState({
-              method: value && value !== ALL ? value : null,
+              method: withoutPrefix(value, METHOD_OPTION_PREFIX),
               page: 0,
             })
           }
@@ -227,10 +265,10 @@ function getColumns(): TreeTableColumnDef<McpAuditLogEntry>[] {
     {
       id: "created-at",
       header: t`Date`,
-      width: 170,
+      width: 190,
       accessorFn: (entry) => entry.created_at,
       cell: ({ row }) => (
-        <DateTime value={row.original.created_at} unit="minute" />
+        <Text>{formatTimestamp(row.original.created_at)}</Text>
       ),
     },
     {
@@ -247,12 +285,12 @@ function getColumns(): TreeTableColumnDef<McpAuditLogEntry>[] {
       width: 140,
       accessorFn: (entry) => entry.method,
       cell: ({ getValue }) => (
-        <Ellipsified className={CS.textBold}>{String(getValue())}</Ellipsified>
+        <Ellipsified fw="bold">{String(getValue())}</Ellipsified>
       ),
     },
     {
       id: "target",
-      header: t`Tool or resource`,
+      header: t`Target`,
       minWidth: 120,
       accessorFn: (entry) => entry.target ?? "—",
       cell: ({ getValue }) => <Ellipsified>{String(getValue())}</Ellipsified>,
@@ -272,7 +310,7 @@ function getColumns(): TreeTableColumnDef<McpAuditLogEntry>[] {
       header: t`Duration`,
       width: 100,
       accessorFn: (entry) =>
-        entry.duration_ms == null ? "—" : `${entry.duration_ms} ms`,
+        entry.duration_ms == null ? "—" : t`${entry.duration_ms} ms`,
       cell: ({ getValue }) => <Text>{String(getValue())}</Text>,
     },
   ];
@@ -295,6 +333,8 @@ function AuditLogTable({
     columns,
     getNodeId: (entry) => String(entry.id),
     enableSorting: false,
+    // Enter on the row focused with the arrow keys opens its details, like a click.
+    onRowActivate: (row) => onSelect(row.original),
   });
 
   if (isLoading || error) {
@@ -356,7 +396,7 @@ function EntryDetailsModal({
       {entry && (
         <Stack gap="md" data-testid="mcp-audit-log-details">
           <DetailRow label={t`Date`}>
-            <DateTime value={entry.created_at} unit="minute" />
+            {formatTimestamp(entry.created_at)}
           </DetailRow>
           <DetailRow label={t`User`}>{getEntryUserLabel(entry)}</DetailRow>
           <DetailRow label={t`Outcome`}>
@@ -365,7 +405,7 @@ function EntryDetailsModal({
             </Badge>
           </DetailRow>
           <DetailRow label={t`Authentication`}>
-            {entry.auth_method === "oauth" ? t`OAuth token` : t`Session`}
+            {getAuthMethodLabel(entry.auth_method)}
           </DetailRow>
           <DetailRow label={t`MCP session`}>
             {entry.mcp_session_id ?? "—"}

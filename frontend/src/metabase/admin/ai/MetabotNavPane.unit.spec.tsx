@@ -53,7 +53,7 @@ describe("MetabotNavPane", () => {
     reinitialize();
   });
 
-  it("hides the ai controls items and disables MCP when all AI features are disabled", () => {
+  it("hides the ai controls items and disables MCP authorizations when all AI features are disabled", async () => {
     setup({
       aiControlsEnabled: true,
       aiFeaturesEnabled: false,
@@ -61,12 +61,24 @@ describe("MetabotNavPane", () => {
     });
 
     expect(screen.getByText("AI Settings")).toBeInTheDocument();
-    expect(
-      screen.getByText("MCP", { selector: '[data-disabled="true"] *' }),
-    ).toBeInTheDocument();
     expect(screen.queryByText("Usage controls")).not.toBeInTheDocument();
     expect(screen.queryByText("Customization")).not.toBeInTheDocument();
     expect(screen.queryByText("System prompts")).not.toBeInTheDocument();
+
+    // The audit log retention keeps applying, so its settings and the log stay reachable.
+    await userEvent.click(screen.getByText("MCP"));
+    expect(
+      await screen.findByRole("link", { name: "Settings" }),
+    ).toHaveAttribute("href", "/admin/metabot/mcp");
+    expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute(
+      "href",
+      "/admin/metabot/mcp/audit-log",
+    );
+    expect(
+      screen.getByText("Authorizations", {
+        selector: '[data-disabled="true"] *',
+      }),
+    ).toBeInTheDocument();
   });
 
   it("displays the ai controls in a disabled state when not configured", async () => {

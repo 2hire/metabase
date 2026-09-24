@@ -1,7 +1,10 @@
 (ns metabase.mcp-restrictions.settings
   (:require
+   [clojure.string :as str]
    [metabase.settings.core :as setting :refer [defsetting]]
    [metabase.util.i18n :refer [deferred-tru tru]]))
+
+(set! *warn-on-reflection* true)
 
 (defn- normalize-ids
   "Coerce a setting value to a sorted vector of distinct positive integer IDs."
@@ -105,6 +108,22 @@
   :audit      :getter
   :doc        false)
 
+(defn- parse-retention-days
+  "The number of days `new-value` (an integer, or a string holding one) stands for, or nil to reset the setting to its
+  default. Throws a 400 for anything else: silently falling back to the default would make the retention job delete
+  entries the admin meant to keep."
+  [new-value]
+  (let [days (cond
+               (nil? new-value)    nil
+               (integer? new-value) new-value
+               (and (number? new-value) (== new-value (Math/floor (double new-value)))) (long new-value)
+               (and (string? new-value) (re-matches #"\s*\d+\s*" new-value)) (or (parse-long (str/trim new-value)) ::invalid)
+               :else ::invalid)]
+    (when (or (= days ::invalid) (and days (neg? days)))
+      (throw (ex-info (tru "The MCP audit log retention must be a whole number of days, zero or more.")
+                      {:status-code 400})))
+    days))
+
 (defsetting mcp-audit-log-retention-days
   (deferred-tru "How many days MCP audit log entries are kept before they are deleted. Set it to 0 to keep them forever.")
   :type       :integer
@@ -114,7 +133,4 @@
   :audit      :getter
   :doc        false
   :setter     (fn [new-value]
-                (let [days (cond-> new-value (string? new-value) parse-long)]
-                  (when (and days (neg? days))
-                    (throw (ex-info (tru "The MCP audit log retention must be zero or more.") {:status-code 400})))
-                  (setting/set-value-of-type! :integer :mcp-audit-log-retention-days days))))
+                (setting/set-value-of-type! :integer :mcp-audit-log-retention-days (parse-retention-days new-value))))
