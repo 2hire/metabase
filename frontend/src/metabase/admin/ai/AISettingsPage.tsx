@@ -22,6 +22,7 @@ import { Divider, Flex, Stack, Switch, Tabs } from "metabase/ui";
 
 import { AIProviderSettingsSection } from "./AIProviderSettingsSection";
 import { EmbeddedMetabotUpsell } from "./EmbeddedMetabotUpsell";
+import { McpAccessListSettings } from "./McpAccessListSettings";
 import { McpAppsSettings } from "./McpAppsSettings";
 import { McpRestrictedDataSettings } from "./McpRestrictedDataSettings";
 import { MetabotSettingsPanel } from "./MetabotSettingsPanel";
@@ -109,6 +110,8 @@ export function McpSettingsPage() {
     >
       <DisabledSection disabled={!areAiFeaturesEnabled}>
         <McpAppsSettings id={MCP_SECTION_ID} />
+
+        <McpAccessListSettings />
 
         <McpRestrictedDataSettings />
 

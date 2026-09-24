@@ -9,6 +9,7 @@
    [metabase.api.common :as api]
    [metabase.api.macros.scope :as scope]
    [metabase.api.open-api :as open-api]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp.core :as mcp]
    [metabase.mcp.resources :as mcp.resources]
    [metabase.mcp.session :as mcp.session]
@@ -371,6 +372,9 @@
                      (try
                        (let [request (assoc request :token-scopes token-scopes)]
                          (cond
+                           (not (mcp-restrictions/user-allowed? user-id))
+                           (respond (json-response 403 (jsonrpc-error nil -32603 (mcp-restrictions/access-denied-message))))
+
                            (= :post (:request-method request))
                            (respond (handle-post user-id request))
 

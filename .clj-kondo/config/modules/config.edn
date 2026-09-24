@@ -1242,6 +1242,7 @@
            app-db
            config
            llm
+           mcp-restrictions
            oauth-server
            request
            server
@@ -1254,10 +1255,11 @@
   {:team "Metabot"
    :api  #{metabase.mcp-restrictions.core
            metabase.mcp-restrictions.init}
-   :uses #{settings
-           util}
+   :uses #{api settings util}
    :model-imports #{:model/Card
-                    :model/Table}}
+                    :model/PermissionsGroupMembership
+                    :model/Table
+                    :model/User}}
 
   measures
   {:team "Graphy"
@@ -1500,6 +1502,7 @@
            api-scope
            appearance
            mcp
+           mcp-restrictions
            models
            request
            settings

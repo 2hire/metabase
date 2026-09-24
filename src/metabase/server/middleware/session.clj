@@ -409,14 +409,20 @@
   *  `*current-user-permissions-set*`   delay that returns the set of permissions granted to the current user from DB
   *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user
 
-  Requests authenticated as an AI client run with the MCP data restrictions enforced, and may only write through the
-  endpoints [[mcp-restrictions/ai-client-write-allowed?]] lets through."
+  Requests authenticated as an AI client are rejected when the user is not on the MCP access list. Otherwise they run
+  with the MCP data restrictions enforced, and may only write through the endpoints
+  [[mcp-restrictions/ai-client-write-allowed?]] lets through."
   [handler]
   (fn [request respond raise]
     (with-current-user-for-request request
       (cond
         (not (ai-client-request? request))
         (handler request respond raise)
+
+        ;; Tokens issued before the user was removed from the MCP access list stop working right away.
+        (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
+        (respond (mcp-restrictions/forbidden-response "mcp_access_denied"
+                                                      (mcp-restrictions/access-denied-message)))
 
         (not (mcp-restrictions/ai-client-write-allowed? (:request-method request) (:uri request)))
         (respond (mcp-restrictions/forbidden-response "mcp_write_denied"

@@ -1,5 +1,6 @@
 (ns metabase.mcp-restrictions.core
-  "Databases and tables that an admin has marked as off-limits to AI clients.
+  "Admin-configured limits on AI clients: who may use the MCP server (see [[user-allowed?]]), and which databases and
+  tables are off-limits to them.
 
   The restriction only applies while [[*enforced?*]] is bound to true, which the AI entry points do for the lifetime of
   a request: the MCP server and the Agent API it dispatches to, requests authenticated with an OAuth access token from
@@ -19,6 +20,7 @@
   - FieldValues are read-only, so a restricted request never recomputes, empties or deletes the shared cache."
   (:require
    [clojure.string :as str]
+   [metabase.api.common :as api]
    [metabase.mcp-restrictions.settings :as mcp-restrictions.settings]
    [metabase.settings.core :as setting]
    [metabase.util :as u]
@@ -244,3 +246,28 @@
   "Message for an AI client calling an endpoint it may not write to."
   []
   (tru "MCP clients can't make this change. They can run queries and create or edit questions, dashboards and collections."))
+
+;;; ------------------------------------------------- Access list --------------------------------------------------
+
+(defn user-allowed?
+  "Whether the user with `user-id` may use the MCP server and the Agent API. Admins always may. Everyone may while the
+  access list is empty; once it names users or groups, only those users and members of those groups may."
+  [user-id]
+  (let [allowed-user-ids  (set (mcp-restrictions.settings/mcp-allowed-user-ids))
+        allowed-group-ids (set (mcp-restrictions.settings/mcp-allowed-group-ids))]
+    (boolean
+     (or (and (empty? allowed-user-ids) (empty? allowed-group-ids))
+         (and user-id
+              (or (contains? allowed-user-ids user-id)
+                  (if (= user-id api/*current-user-id*)
+                    api/*is-superuser?*
+                    (t2/select-one-fn :is_superuser :model/User :id user-id))
+                  (and (seq allowed-group-ids)
+                       (t2/exists? :model/PermissionsGroupMembership
+                                   :user_id  user-id
+                                   :group_id [:in allowed-group-ids]))))))))
+
+(defn access-denied-message
+  "The message shown to a user who is not on the MCP access list."
+  []
+  (tru "You are not allowed to use the MCP server. Ask an admin to add you to the MCP access list."))

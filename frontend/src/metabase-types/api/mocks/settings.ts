@@ -445,6 +445,8 @@ export const createMockSettings = (
   "mcp-apps-cors-custom-origins": "",
   "mcp-restricted-database-ids": [],
   "mcp-restricted-table-ids": [],
+  "mcp-allowed-user-ids": [],
+  "mcp-allowed-group-ids": [],
   "transforms-meter-locked": null,
   "mfa-enforcement": "off",
   ...opts,

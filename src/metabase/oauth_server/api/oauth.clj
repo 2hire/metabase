@@ -8,6 +8,7 @@
    [malli.core :as mc]
    [metabase.api-scope.core :as api-scope]
    [metabase.api.macros :as api.macros]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.oauth-server.consent-page :as consent-page]
    [metabase.oauth-server.core :as oauth-server]
    [metabase.oauth-server.models.oauth-client-event :as client-event]
@@ -298,16 +299,23 @@
                   csrf-token   (generate-csrf-token)
                   oauth-params (select-keys parsed oauth-param-keys)
                   params-sig   (sign-oauth-params csrf-token oauth-params)]
-              (-> {:status  200
-                   :headers {"Content-Type" "text/html; charset=utf-8"}
-                   :body    (consent-page/render-consent-page
-                             {:client-name  (some-> (:client-name client) (truncate 64))
-                              :nonce        (:nonce request)
-                              :csrf-token   csrf-token
-                              :params-sig   params-sig
-                              :scopes       (requested-scope-descriptions (:scope oauth-params))
-                              :oauth-params oauth-params})}
-                  (response/set-cookie csrf-cookie-name csrf-token (csrf-cookie-opts 600))))
+              (if-not (mcp-restrictions/user-allowed? (:metabase-user-id request))
+                ;; Not on the MCP access list: send the client an `access_denied` error instead of a consent page, so
+                ;; it stops waiting for the redirect.
+                {:status  302
+                 :headers {"Location" (oidc/deny-authorization provider parsed "access_denied"
+                                                               (mcp-restrictions/access-denied-message))}
+                 :body    ""}
+                (-> {:status  200
+                     :headers {"Content-Type" "text/html; charset=utf-8"}
+                     :body    (consent-page/render-consent-page
+                               {:client-name  (some-> (:client-name client) (truncate 64))
+                                :nonce        (:nonce request)
+                                :csrf-token   csrf-token
+                                :params-sig   params-sig
+                                :scopes       (requested-scope-descriptions (:scope oauth-params))
+                                :oauth-params oauth-params})}
+                    (response/set-cookie csrf-cookie-name csrf-token (csrf-cookie-opts 600)))))
             (catch ExceptionInfo e
               (log/warnf "OAuth authorize request failed: %s" (ex-message e))
               {:status  400
@@ -352,7 +360,9 @@
                 {:status  403
                  :headers {"Content-Type" "application/json"}
                  :body    {:error "csrf_validation_failed"}}
-                (let [approved (= "true" (str (:approved body)))]
+                ;; Users not on the MCP access list can only deny.
+                (let [approved (and (= "true" (str (:approved body)))
+                                    (mcp-restrictions/user-allowed? (:metabase-user-id request)))]
                   (try
                     (let [parsed        (oidc/parse-authorization-request provider auth-params)
                           ;; Verify the HMAC against the *parsed* params (same normalized form as the consent page).
