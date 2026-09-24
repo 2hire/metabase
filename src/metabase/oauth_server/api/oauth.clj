@@ -270,17 +270,9 @@
                :body    body}))))
       {:status 404 :body {:error "not_found"}}))
 
-(defn- access-denied-response
-  "Response for a user who is not on the MCP access list: no authorization code, hence no access token, is issued."
-  []
-  {:status  403
-   :headers {"Content-Type" "application/json"}
-   :body    {:error             "access_denied"
-             :error_description (mcp-restrictions/access-denied-message)}})
-
 #_{:clj-kondo/ignore [:metabase/validate-defendpoint-query-params-use-kebab-case]}
 (api.macros/defendpoint :get "/authorize"
-  :- [:map [:status [:enum 200 302 400 403 404]] [:body [:or :string :map]]]
+  :- [:map [:status [:enum 200 302 400 404]] [:body [:or :string :map]]]
   "Handles the authorization endpoint (GET /oauth/authorize)."
   [_route-params
    query-params :- [:map
@@ -296,16 +288,10 @@
                     [::mc/default [:map-of :keyword :string]]]
    _body
    request]
-  (cond
-    (not (:metabase-user-id request))
+  (if-not (:metabase-user-id request)
     {:status  302
      :headers {"Location" (login-redirect-url request)}
      :body    ""}
-
-    (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
-    (access-denied-response)
-
-    :else
     (or (when-let [provider (oauth-server/get-provider)]
           (try
             (let [parsed       (oidc/parse-authorization-request provider query-params)
@@ -313,16 +299,23 @@
                   csrf-token   (generate-csrf-token)
                   oauth-params (select-keys parsed oauth-param-keys)
                   params-sig   (sign-oauth-params csrf-token oauth-params)]
-              (-> {:status  200
-                   :headers {"Content-Type" "text/html; charset=utf-8"}
-                   :body    (consent-page/render-consent-page
-                             {:client-name  (some-> (:client-name client) (truncate 64))
-                              :nonce        (:nonce request)
-                              :csrf-token   csrf-token
-                              :params-sig   params-sig
-                              :scopes       (requested-scope-descriptions (:scope oauth-params))
-                              :oauth-params oauth-params})}
-                  (response/set-cookie csrf-cookie-name csrf-token (csrf-cookie-opts 600))))
+              (if-not (mcp-restrictions/user-allowed? (:metabase-user-id request))
+                ;; Not on the MCP access list: send the client an `access_denied` error instead of a consent page, so
+                ;; it stops waiting for the redirect.
+                {:status  302
+                 :headers {"Location" (oidc/deny-authorization provider parsed "access_denied"
+                                                               (mcp-restrictions/access-denied-message))}
+                 :body    ""}
+                (-> {:status  200
+                     :headers {"Content-Type" "text/html; charset=utf-8"}
+                     :body    (consent-page/render-consent-page
+                               {:client-name  (some-> (:client-name client) (truncate 64))
+                                :nonce        (:nonce request)
+                                :csrf-token   csrf-token
+                                :params-sig   params-sig
+                                :scopes       (requested-scope-descriptions (:scope oauth-params))
+                                :oauth-params oauth-params})}
+                    (response/set-cookie csrf-cookie-name csrf-token (csrf-cookie-opts 600)))))
             (catch ExceptionInfo e
               (log/warnf "OAuth authorize request failed: %s" (ex-message e))
               {:status  400
@@ -351,16 +344,10 @@
             [:resource              {:optional true} [:maybe [:or :string [:sequential :string]]]]
             [::mc/default [:map-of :keyword :string]]]
    request]
-  (cond
-    (not (:metabase-user-id request))
+  (if-not (:metabase-user-id request)
     {:status  401
      :headers {"Content-Type" "application/json"}
      :body    {:error "unauthorized"}}
-
-    (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
-    (access-denied-response)
-
-    :else
     (with-throttling-429 [authorize-decision-throttler (:metabase-user-id request)]
       (or (when-let [provider (oauth-server/get-provider)]
             (let [cookie-token (get-in request [:cookies csrf-cookie-name :value])
@@ -373,7 +360,9 @@
                 {:status  403
                  :headers {"Content-Type" "application/json"}
                  :body    {:error "csrf_validation_failed"}}
-                (let [approved (= "true" (str (:approved body)))]
+                ;; Users not on the MCP access list can only deny.
+                (let [approved (and (= "true" (str (:approved body)))
+                                    (mcp-restrictions/user-allowed? (:metabase-user-id request)))]
                   (try
                     (let [parsed        (oidc/parse-authorization-request provider auth-params)
                           ;; Verify the HMAC against the *parsed* params (same normalized form as the consent page).

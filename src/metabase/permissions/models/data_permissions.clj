@@ -8,6 +8,7 @@
    [metabase.audit-app.core :as audit]
    [metabase.config.core :as config]
    [metabase.lib.schema.id :as lib.schema.id]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.interface :as mi]
    [metabase.permissions.published-tables :as published-tables]
    [metabase.permissions.schema :as permissions.schema]
@@ -644,6 +645,10 @@
     (throw (ex-info (tru "Permission type {0} is a database-level permission." perm-type)
                     {perm-type (permissions.schema/data-permissions perm-type)})))
   (cond
+    ;; MCP clients get no access to restricted tables, admins included.
+    (mcp-restrictions/restricted-table? database-id table-id)
+    (least-permissive-value perm-type)
+
     (is-superuser? user-id)
     (most-permissive-value perm-type)
 
@@ -703,6 +708,9 @@
     (throw (ex-info (tru "Permission type {0} is not a table-level permission." perm-type)
                     {perm-type (permissions.schema/data-permissions perm-type)})))
   (cond
+    (mcp-restrictions/restricted-database? database-id)
+    (least-permissive-value perm-type)
+
     (is-superuser? user-id)
     (most-permissive-value perm-type)
 
@@ -779,8 +787,14 @@
   (when (not= :model/Database (model-by-perm-type perm-type))
     (throw (ex-info (tru "Permission type {0} is a table-level permission." perm-type)
                     {perm-type (permissions.schema/data-permissions perm-type)})))
-  (if (is-superuser? user-id)
+  (cond
+    (mcp-restrictions/restricted-database? database-id)
+    (least-permissive-value perm-type)
+
+    (is-superuser? user-id)
     (most-permissive-value perm-type)
+
+    :else
     (or (get-in (cached-database-perms user-id database-id) [perm-type database-id :database])
         (least-permissive-value perm-type))))
 
@@ -801,6 +815,10 @@
     (throw (ex-info (tru "Permission type {0} is not a table-level permission." perm-type)
                     {perm-type (permissions.schema/data-permissions perm-type)})))
   (cond
+    ;; The most restrictive table-level permission: none, when an MCP client can't reach one of the tables.
+    (mcp-restrictions/database-holds-restricted-tables? database-id)
+    (least-permissive-value perm-type)
+
     (is-superuser? user-id)
     (most-permissive-value perm-type)
 
@@ -834,6 +852,9 @@
      (throw (ex-info (tru "Permission type {0} is not a table-level permission." perm-type)
                      {perm-type (permissions.schema/data-permissions perm-type)})))
    (cond
+     (mcp-restrictions/restricted-database? database-id)
+     (least-permissive-value perm-type)
+
      (is-superuser? user-id)
      (most-permissive-value perm-type)
 

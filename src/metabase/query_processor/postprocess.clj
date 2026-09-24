@@ -33,9 +33,7 @@
     (f metadata) -> rf
 
   All of these middlewares assume MBQL 5."
-  [;; innermost, so it sees the final rows and the annotated column metadata
-   #'qp.mcp-restrictions/mask-sensitive-values
-   #'qp.pivot.middleware/add-pivot-grouping
+  [#'qp.pivot.middleware/add-pivot-grouping
    #'qp.pivot.middleware/project-pivot-subquery-rows
    #'format-rows/format-rows
    #'results-metadata/record-and-return-metadata!
@@ -49,6 +47,8 @@
    #'large-int/convert-large-int-to-string
    #'viz-settings/update-viz-settings
    #'qp.cumulative-aggregations/sum-cumulative-aggregation-columns
+   ;; right inside annotation, so it sees annotated column metadata and masks rows before anything else here sees them
+   #'qp.mcp-restrictions/mask-sensitive-values
    #'annotate/add-column-info
    #'fetch-source-query/add-dataset-info])
 ;; ↑↑↑ POST-PROCESSING ↑↑↑ happens from BOTTOM TO TOP

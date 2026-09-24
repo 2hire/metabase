@@ -1152,6 +1152,7 @@
    :api  #{metabase.lib-be.core metabase.lib-be.init metabase.lib-be.schema}
    :uses #{legacy-mbql
            lib
+           mcp-restrictions
            models
            settings
            util}
@@ -1570,6 +1571,7 @@
            config
            events
            lib
+           mcp-restrictions
            models
            premium-features
            remote-sync

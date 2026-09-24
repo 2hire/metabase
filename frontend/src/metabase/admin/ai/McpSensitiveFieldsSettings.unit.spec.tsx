@@ -173,8 +173,11 @@ describe("McpSensitiveFieldsSettings", () => {
     );
 
     const put = await findPut();
-    expect(put.url).toContain("/setting/mcp-non-sensitive-field-ids");
-    expect(put.body).toEqual({ value: [100] });
+    expect(put.url).toMatch(/\/api\/setting$/);
+    expect(put.body).toEqual({
+      "mcp-sensitive-field-ids": [],
+      "mcp-non-sensitive-field-ids": [100],
+    });
   });
 
   it("can turn off detection by name", async () => {

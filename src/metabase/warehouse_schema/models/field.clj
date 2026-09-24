@@ -6,6 +6,7 @@
    [metabase.app-db.core :as mdb]
    [metabase.lib.core :as lib]
    [metabase.lib.schema.metadata]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.humanization :as humanization]
    [metabase.models.interface :as mi]
    [metabase.models.serialization :as serdes]
@@ -123,7 +124,14 @@
 
 (t2/define-after-select :model/Field
   [field]
-  (dissoc field :is_defective_duplicate :unique_field_helper))
+  (cond-> (dissoc field :is_defective_duplicate :unique_field_helper)
+    ;; A fingerprint holds the aggregates (min, max, averages, earliest, latest...) MCP clients can't compute on a
+    ;; sensitive field. Only fields selected with their fingerprint are checked, which also keeps the lookup's own
+    ;; Field selects from recursing here.
+    (and (:fingerprint field)
+         (mcp-restrictions/enforced?)
+         (mcp-restrictions/sensitive-field-in-table? (:table_id field) (:id field)))
+    (assoc :fingerprint nil)))
 
 (defn- enforce-effective-type-invariant
   "GHY-3388 invariant: a Field row with no coercion_strategy must have effective_type=base_type.

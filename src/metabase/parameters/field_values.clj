@@ -163,13 +163,39 @@
           fv))
       (field-values/get-or-create-full-field-values! field))))
 
+(defn- empty-field-values
+  [field]
+  {:field_id (u/the-id field) :values [] :human_readable_values [] :has_more_values false})
+
+(defn- existing-field-values
+  "The FieldValues already cached for `field` under `constraints`, without computing, refreshing or deleting any."
+  [field constraints]
+  (let [hash-input (hash-input-for-field-values field constraints)]
+    (if (= hash-input {:field-id (u/the-id field)})
+      (t2/select-one :model/FieldValues :field_id (u/the-id field) :type :full)
+      (t2/select-one :model/FieldValues
+                     :field_id (u/the-id field) :type :advanced :hash_key (str (hash hash-input))))))
+
 (defn get-or-create-field-values!
-  "Gets or creates field values. MCP clients get no values for sensitive fields."
+  "Gets or creates field values.
+
+  MCP clients get nothing for fields of restricted tables or sensitive fields, and only ever read the cache: computing
+  values runs a query under their restrictions, and whatever it returned (masked values, or nothing when it fails)
+  would be stored for every user."
   ([field] (get-or-create-field-values! field nil))
   ([field constraints]
-   (if (mcp-restrictions/sensitive-field? (u/the-id field))
-     {:field_id (u/the-id field) :values [] :human_readable_values [] :has_more_values false}
-     (get-or-create-field-values!* field constraints))))
+   (cond
+     (not (mcp-restrictions/enforced?))
+     (get-or-create-field-values!* field constraints)
+
+     (or (mcp-restrictions/restricted-table? (t2/select-one-fn :db_id :model/Table :id (:table_id field))
+                                             (:table_id field))
+         (mcp-restrictions/sensitive-field? (u/the-id field)))
+     (empty-field-values field)
+
+     :else
+     (or (existing-field-values field constraints)
+         (empty-field-values field)))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                               Public functions                                                 |

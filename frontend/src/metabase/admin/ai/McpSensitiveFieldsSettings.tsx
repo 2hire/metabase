@@ -12,6 +12,7 @@ import {
   useListTablesQuery,
 } from "metabase/api";
 import { useAdminSetting } from "metabase/api/utils";
+import { LoadingAndErrorWrapper } from "metabase/common/components/LoadingAndErrorWrapper";
 import {
   ActionIcon,
   Badge,
@@ -29,6 +30,7 @@ import type {
   Database,
   FieldId,
   McpFieldLocation,
+  McpSensitiveField,
   McpSensitiveFieldSource,
   Table,
 } from "metabase-types/api";
@@ -72,38 +74,56 @@ const getTableOptions = (tables: Table[], databases: Database[]) => {
 };
 
 export const McpSensitiveFieldsSettings = () => {
-  const { data } = useGetMcpSensitiveFieldsQuery();
+  const { data, isLoading, error } = useGetMcpSensitiveFieldsQuery();
   const {
     value: autoDetect,
     updateSetting,
     updateSettings,
   } = useAdminSetting("mcp-sensitive-fields-auto-detect");
-  const { value: manualIds } = useAdminSetting("mcp-sensitive-field-ids");
-  const { value: excludedIds } = useAdminSetting("mcp-non-sensitive-field-ids");
+  const { value: savedManualIds } = useAdminSetting("mcp-sensitive-field-ids");
+  const { value: savedExcludedIds } = useAdminSetting(
+    "mcp-non-sensitive-field-ids",
+  );
+
+  // Each change saves whole lists, so the latest ones live in local state: deriving them from the saved settings would
+  // drop a change made before the previous save had been refetched.
+  const [lists, setLists] = useState<{
+    manualIds: FieldId[];
+    excludedIds: FieldId[];
+  } | null>(null);
+  const manualIds = lists?.manualIds ?? savedManualIds ?? [];
+  const excludedIds = lists?.excludedIds ?? savedExcludedIds ?? [];
+
+  const saveLists = (next: {
+    manualIds: FieldId[];
+    excludedIds: FieldId[];
+  }) => {
+    setLists(next);
+    updateSettings({
+      "mcp-sensitive-field-ids": next.manualIds,
+      "mcp-non-sensitive-field-ids": next.excludedIds,
+    });
+  };
 
   const sensitive = data?.sensitive ?? [];
   const excluded = data?.excluded ?? [];
 
   const markSensitive = (fieldId: FieldId) =>
-    updateSettings({
-      "mcp-sensitive-field-ids": _.uniq([...(manualIds ?? []), fieldId]),
-      "mcp-non-sensitive-field-ids": (excludedIds ?? []).filter(
-        (id) => id !== fieldId,
-      ),
+    saveLists({
+      manualIds: _.uniq([...manualIds, fieldId]),
+      excludedIds: excludedIds.filter((id) => id !== fieldId),
     });
 
   const markNotSensitive = (fieldId: FieldId) =>
-    updateSettings({
-      "mcp-sensitive-field-ids": (manualIds ?? []).filter(
-        (id) => id !== fieldId,
-      ),
-      "mcp-non-sensitive-field-ids": _.uniq([...(excludedIds ?? []), fieldId]),
+    saveLists({
+      manualIds: manualIds.filter((id) => id !== fieldId),
+      excludedIds: _.uniq([...excludedIds, fieldId]),
     });
 
   const restoreDefault = (fieldId: FieldId) =>
-    updateSetting({
-      key: "mcp-non-sensitive-field-ids",
-      value: (excludedIds ?? []).filter((id) => id !== fieldId),
+    saveLists({
+      manualIds,
+      excludedIds: excludedIds.filter((id) => id !== fieldId),
     });
 
   return (
@@ -130,24 +150,12 @@ export const McpSensitiveFieldsSettings = () => {
             id="mcp-sensitive-fields"
             title={t`Fields treated as sensitive`}
           />
-          {sensitive.length === 0 ? (
-            <Text c="text-secondary" mt="sm">{t`No sensitive fields.`}</Text>
-          ) : (
-            <Stack gap="xs" mt="sm" data-testid="mcp-sensitive-fields">
-              {sensitive.map((field) => (
-                <Flex key={field.id} align="center" gap="sm">
-                  <Text flex={1}>{getFieldLocation(field)}</Text>
-                  <Badge variant="light">{getSourceLabel(field.source)}</Badge>
-                  <ActionIcon
-                    aria-label={t`Stop treating ${field.name} as sensitive`}
-                    onClick={() => markNotSensitive(field.id)}
-                  >
-                    <Icon name="close" />
-                  </ActionIcon>
-                </Flex>
-              ))}
-            </Stack>
-          )}
+          <SensitiveFieldList
+            fields={sensitive}
+            isLoading={isLoading}
+            error={error}
+            onRemove={markNotSensitive}
+          />
         </Box>
 
         <AddSensitiveField onAdd={markSensitive} />
@@ -179,6 +187,43 @@ export const McpSensitiveFieldsSettings = () => {
     </SettingsSection>
   );
 };
+
+function SensitiveFieldList({
+  fields,
+  isLoading,
+  error,
+  onRemove,
+}: {
+  fields: McpSensitiveField[];
+  isLoading: boolean;
+  error: unknown;
+  onRemove: (fieldId: FieldId) => void;
+}) {
+  if (isLoading || error) {
+    return <LoadingAndErrorWrapper loading={isLoading} error={error} />;
+  }
+
+  if (fields.length === 0) {
+    return <Text c="text-secondary" mt="sm">{t`No sensitive fields.`}</Text>;
+  }
+
+  return (
+    <Stack gap="xs" mt="sm" data-testid="mcp-sensitive-fields">
+      {fields.map((field) => (
+        <Flex key={field.id} align="center" gap="sm">
+          <Text flex={1}>{getFieldLocation(field)}</Text>
+          <Badge variant="light">{getSourceLabel(field.source)}</Badge>
+          <ActionIcon
+            aria-label={t`Stop treating ${field.name} as sensitive`}
+            onClick={() => onRemove(field.id)}
+          >
+            <Icon name="close" />
+          </ActionIcon>
+        </Flex>
+      ))}
+    </Stack>
+  );
+}
 
 function AddSensitiveField({ onAdd }: { onAdd: (fieldId: FieldId) => void }) {
   const [tableId, setTableId] = useState<string | null>(null);
