@@ -26,6 +26,7 @@
    [metabase.app-db.core :as mdb]
    [metabase.config.core :as config]
    [metabase.initialization-status.core :as init-status]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp.core :as mcp]
    [metabase.oauth-server.core :as oauth-server]
    [metabase.premium-features.core :as premium-features]
@@ -361,6 +362,10 @@
      ;; merging it whole both authenticates the request and records the granted scopes.
      (dissoc (or session-info api-key-info oauth-info mcp-ui-info) :auth-provider)
      (when auth-method {:embedding/auth-method auth-method})
+     ;; Recorded from the credential itself rather than derived from `auth-method`, which is overridden by the route
+     ;; (e.g. "metabot", "agent-api") and so can't tell which credential authenticated the request.
+     (when (and (not session-info) (not api-key-info) (or oauth-info mcp-ui-info))
+       {::ai-client? true})
      (when x-metabase-locale
        (log/tracef "Found X-Metabase-Locale header: using %s as user locale" (pr-str x-metabase-locale))
        {:user-locale (i18n/normalized-locale-string x-metabase-locale)}))))
@@ -384,6 +389,13 @@
   [request & body]
   `(request/do-with-current-user ~request (fn [] ~@body)))
 
+(defn- ai-client-request?
+  "Whether `request` was authenticated with a credential only AI clients hold: an OAuth access token from the embedded
+  authorization server (MCP clients, the Metabase CLI) or the scoped credential of the MCP Apps iframe. The MCP data
+  restrictions apply to these requests."
+  [request]
+  (boolean (::ai-client? request)))
+
 (defn bind-current-user
   "Middleware that binds [[metabase.api.common/*current-user*]], [[*current-user-id*]], [[*is-superuser?*]],
   [[*current-user-permissions-set*]], and [[metabase.settings.models.setting/*user-local-values*]].
@@ -395,11 +407,24 @@
   *  `*is-superuser?*`                  Boolean stating whether current user is a superuser.
   *  `*is-group-manager?*`              Boolean stating whether current user is a group manager of at least one group.
   *  `*current-user-permissions-set*`   delay that returns the set of permissions granted to the current user from DB
-  *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user"
+  *  `*user-local-values*`              atom containing a map of user-local settings and values for the current user
+
+  Requests authenticated as an AI client run with the MCP data restrictions enforced, and may only write through the
+  endpoints [[mcp-restrictions/ai-client-write-allowed?]] lets through."
   [handler]
   (fn [request respond raise]
     (with-current-user-for-request request
-      (handler request respond raise))))
+      (cond
+        (not (ai-client-request? request))
+        (handler request respond raise)
+
+        (not (mcp-restrictions/ai-client-write-allowed? (:request-method request) (:uri request)))
+        (respond (mcp-restrictions/forbidden-response "mcp_write_denied"
+                                                      (mcp-restrictions/ai-client-write-denied-message)))
+
+        :else
+        (mcp-restrictions/with-restrictions-enforced
+          (handler request respond raise))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                         session activity tracking                                              |

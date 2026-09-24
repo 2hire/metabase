@@ -844,6 +844,8 @@ export interface EnterpriseSettings extends Settings {
   "slack-connect-client-secret"?: string | null;
   "mcp-apps-cors-enabled-clients": string[] | null;
   "mcp-apps-cors-custom-origins": string | null;
+  "mcp-restricted-database-ids": number[] | null;
+  "mcp-restricted-table-ids": number[] | null;
   "transforms-meter-locked": boolean | null;
   /**
    * @deprecated

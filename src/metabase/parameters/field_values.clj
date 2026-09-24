@@ -4,6 +4,7 @@
   (:require
    [metabase.app-db.core :as app-db]
    [metabase.classloader.core :as classloader]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.interface :as mi]
    [metabase.util :as u]
    [metabase.warehouse-schema.models.field :as field]
@@ -143,25 +144,56 @@
      :human_readable_values human-readable-values
      :values                values}))
 
+(defn- get-or-create-field-values!*
+  [field constraints]
+  (let [hash-input (hash-input-for-field-values field constraints)
+        advanced-field-value? (not= hash-input {:field-id (u/the-id field)})]
+    (if advanced-field-value?
+      (let [hash-key (str (hash hash-input))
+            select-kvs {:field_id (:id field) :type :advanced :hash_key hash-key}
+            fv (app-db/select-or-insert! :model/FieldValues select-kvs
+                                         #(prepare-advanced-field-values field hash-key constraints))]
+        ;; If it's expired, delete then try to re-create it
+        (if (some-> fv field-values/advanced-field-values-expired?)
+          (do
+            ;; It's possible another process has already recalculated this, but spurious recalculations are OK.
+            (t2/delete! :model/FieldValues :id (:id fv))
+            (recur field constraints))
+          fv))
+      (field-values/get-or-create-full-field-values! field))))
+
+(defn- empty-field-values
+  [field]
+  {:field_id (u/the-id field) :values [] :human_readable_values [] :has_more_values false})
+
+(defn- existing-field-values
+  "The FieldValues already cached for `field` under `constraints`, without computing, refreshing or deleting any."
+  [field constraints]
+  (let [hash-input (hash-input-for-field-values field constraints)]
+    (if (= hash-input {:field-id (u/the-id field)})
+      (t2/select-one :model/FieldValues :field_id (u/the-id field) :type :full)
+      (t2/select-one :model/FieldValues
+                     :field_id (u/the-id field) :type :advanced :hash_key (str (hash hash-input))))))
+
 (defn get-or-create-field-values!
-  "Gets or creates field values."
+  "Gets or creates field values.
+
+  MCP clients get nothing for fields of restricted tables, and only ever read the cache: computing values runs a query
+  under their restrictions, and whatever it returned (or its failure, which empties the values) would be stored for
+  every user."
   ([field] (get-or-create-field-values! field nil))
   ([field constraints]
-   (let [hash-input (hash-input-for-field-values field constraints)
-         advanced-field-value? (not= hash-input {:field-id (u/the-id field)})]
-     (if advanced-field-value?
-       (let [hash-key (str (hash hash-input))
-             select-kvs {:field_id (:id field) :type :advanced :hash_key hash-key}
-             fv (app-db/select-or-insert! :model/FieldValues select-kvs
-                                          #(prepare-advanced-field-values field hash-key constraints))]
-         ;; If it's expired, delete then try to re-create it
-         (if (some-> fv field-values/advanced-field-values-expired?)
-           (do
-             ;; It's possible another process has already recalculated this, but spurious recalculations are OK.
-             (t2/delete! :model/FieldValues :id (:id fv))
-             (recur field constraints))
-           fv))
-       (field-values/get-or-create-full-field-values! field)))))
+   (cond
+     (not (mcp-restrictions/enforced?))
+     (get-or-create-field-values!* field constraints)
+
+     (mcp-restrictions/restricted-table? (t2/select-one-fn :db_id :model/Table :id (:table_id field))
+                                         (:table_id field))
+     (empty-field-values field)
+
+     :else
+     (or (existing-field-values field constraints)
+         (empty-field-values field)))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                               Public functions                                                 |

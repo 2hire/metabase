@@ -172,6 +172,7 @@
               lib
               lib-be
               llm
+              mcp-restrictions
               metabot
               queries
               query-permissions
@@ -1151,6 +1152,7 @@
    :api  #{metabase.lib-be.core metabase.lib-be.init metabase.lib-be.schema}
    :uses #{legacy-mbql
            lib
+           mcp-restrictions
            models
            settings
            util}
@@ -1248,6 +1250,15 @@
            system
            util}}
 
+  mcp-restrictions
+  {:team "Metabot"
+   :api  #{metabase.mcp-restrictions.core
+           metabase.mcp-restrictions.init}
+   :uses #{settings
+           util}
+   :model-imports #{:model/Card
+                    :model/Table}}
+
   measures
   {:team "Graphy"
    :api  #{metabase.measures.api}
@@ -1296,6 +1307,7 @@
               lib
               lib-be
               llm
+              mcp-restrictions
               metrics
               models
               native-query-snippets
@@ -1528,6 +1540,7 @@
            classloader
            lib
            lib-be
+           mcp-restrictions
            models
            query-processor
            util
@@ -1550,6 +1563,7 @@
            config
            events
            lib
+           mcp-restrictions
            models
            premium-features
            remote-sync
@@ -1871,6 +1885,7 @@
            legacy-mbql
            lib
            lib-be
+           mcp-restrictions
            model-persistence
            models
            parameters
@@ -2056,6 +2071,7 @@
            initialization-status
            lib-be
            mcp
+           mcp-restrictions
            oauth-server
            premium-features
            query-processor
@@ -2638,6 +2654,7 @@
            driver
            lib
            lib-be
+           mcp-restrictions
            models
            parameters
            permissions
@@ -2700,6 +2717,7 @@
            audit-app
            driver
            lib
+           mcp-restrictions
            models
            permissions
            premium-features

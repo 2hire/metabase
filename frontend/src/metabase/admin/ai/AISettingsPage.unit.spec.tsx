@@ -6,10 +6,12 @@ import {
   findRequests,
   setupCollectionByIdEndpoint,
   setupCollectionsEndpoints,
+  setupDatabasesEndpoints,
   setupPropertiesEndpoints,
   setupRecentViewsAndSelectionsEndpoints,
   setupRootCollectionItemsEndpoint,
   setupSettingsEndpoints,
+  setupTablesEndpoints,
   setupUpdateSettingEndpoint,
 } from "__support__/server-mocks";
 import {
@@ -128,6 +130,8 @@ const setup = async ({
   setupCollectionsEndpoints({ collections: [] });
   setupRecentViewsAndSelectionsEndpoints(defaultSeedCollections as any);
   setupMetabotsEndpoints(metabots);
+  setupDatabasesEndpoints([], { hasSavedQuestions: false });
+  setupTablesEndpoints([]);
 
   [FIXED_METABOT_IDS.DEFAULT, FIXED_METABOT_IDS.EMBEDDED].forEach((metabotId) =>
     setupMetabotPromptSuggestionsEndpoint({

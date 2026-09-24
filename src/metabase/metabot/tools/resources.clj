@@ -61,6 +61,8 @@
    [clojure.string :as str]
    [metabase.activity-feed.core :as activity-feed]
    [metabase.api.common :as api]
+   [metabase.lib.core :as lib]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.metabot.scope :as scope]
    [metabase.metabot.tools.entity-details :as entity-details]
    [metabase.metabot.tools.field-stats :as field-stats]
@@ -450,11 +452,27 @@
   (when-let [table (api/read-check :model/Table table-id)]
     (check-resource-database (:db_id table))))
 
+(defn- check-card-mcp-restrictions
+  "For MCP clients, reject a card that reads a restricted table anywhere in its query (joins included) or runs native
+  SQL on a database that holds restricted tables. A query that can't be analyzed is rejected whenever its database
+  holds restricted tables."
+  [{:keys [database_id table_id dataset_query]}]
+  (when (mcp-restrictions/enforced?)
+    (if-let [[table-ids native?] (try
+                                   [(cond-> (set (lib/all-source-table-ids dataset_query))
+                                      table_id (conj table_id))
+                                    (lib/any-native-stage? dataset_query)]
+                                   (catch Exception _ nil))]
+      (mcp-restrictions/check-query-allowed! database_id table-ids native?)
+      (when (mcp-restrictions/database-holds-restricted-tables? database_id)
+        (throw (mcp-restrictions/restriction-exception))))))
+
 (defn check-card-resource-database
   "Require that `card-id`'s (model/question/metric) backing database is addressable as a Metabot
   resource (see [[check-resource-database]]). Exported for [[metabase.metabot.tools.metadata]]."
   [card-id]
   (when-let [card (api/read-check :model/Card card-id)]
+    (check-card-mcp-restrictions card)
     (check-resource-database (:database_id card))))
 
 (defn- check-measure-or-segment-resource-database [model id]

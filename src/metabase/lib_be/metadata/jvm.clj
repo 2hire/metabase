@@ -14,6 +14,7 @@
    [metabase.lib.schema.id :as lib.schema.id]
    [metabase.lib.schema.metadata :as lib.schema.metadata]
    [metabase.lib.util :as lib.util]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.models.interface :as mi]
    [metabase.settings.core :as setting]
    [metabase.util :as u]
@@ -217,7 +218,11 @@
                              :values                (mi/json-out-with-keywordization
                                                      (:values/values field))
                              :human-readable-values (mi/json-out-without-keywordization
-                                                     (:values/human-readable-values field))}}))))
+                                                     (:values/human-readable-values field))}})
+     ;; For MCP clients, fields of restricted tables are retired: Lib and the QP then never join one in to display a
+     ;; remapped value, so queries on the tables pointing at it keep working without reading it.
+     (when (mcp-restrictions/restricted-table? nil (:table-id field))
+       {:visibility-type :retired}))))
 
 ;;;
 ;;; Card
