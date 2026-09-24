@@ -122,6 +122,10 @@ describe("MetabotNavPane", () => {
     expect(
       screen.getByRole("link", { name: "Authorizations" }),
     ).toHaveAttribute("href", "/admin/metabot/mcp/authorizations");
+    expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute(
+      "href",
+      "/admin/metabot/mcp/audit-log",
+    );
   });
 
   it("displays the usage auditing upsell link when audit app is available and ai controls is unavailable", async () => {

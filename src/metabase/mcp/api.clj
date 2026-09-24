@@ -9,6 +9,7 @@
    [metabase.api.common :as api]
    [metabase.api.macros.scope :as scope]
    [metabase.api.open-api :as open-api]
+   [metabase.mcp-restrictions.audit-log :as mcp.audit-log]
    [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp.core :as mcp]
    [metabase.mcp.resources :as mcp.resources]
@@ -101,7 +102,7 @@
 (defn- handle-ping [id _params]
   (jsonrpc-response id {}))
 
-(defn- dispatch-request
+(defn- dispatch-request*
   "Dispatch a single JSON-RPC request. Returns a response map or nil for notifications."
   [{:keys [id method params] :as _msg} session-id token-scopes]
   (try
@@ -118,6 +119,70 @@
     (catch Throwable e
       (log/error "Error dispatching JSON-RPC method" method (ex-message e))
       (jsonrpc-error id -32603 (or (ex-message e) "Internal error")))))
+
+;;; ------------------------------------------------- Audit log ----------------------------------------------------
+
+(defn- audited-method?
+  "Whether a JSON-RPC call with `method` goes in the MCP audit log. Keepalive pings and client notifications don't."
+  [method]
+  (and (string? method)
+       (not= method "ping")
+       (not (str/starts-with? method "notifications/"))))
+
+(defn- audit-context
+  "The parts of an MCP HTTP request every audit log entry for it shares."
+  [user-id request]
+  {:user-id     user-id
+   :auth-method (:mcp-auth-method request)
+   :ip-address  (request/ip-address request)
+   :user-agent  (get-in request [:headers "user-agent"])})
+
+(defn- audit-target [method params]
+  (case method
+    "tools/call"     (:name params)
+    "resources/read" (:uri params)
+    "initialize"     (get-in params [:clientInfo :name])
+    nil))
+
+(defn- audit-arguments [method params]
+  (case method
+    "tools/call" (:arguments params)
+    "initialize" (select-keys params [:protocolVersion :clientInfo])
+    nil))
+
+(defn- response-error
+  "The error message a JSON-RPC `response` carries, or nil when it succeeded. Tool failures come back as a result with
+  `isError`, not as a JSON-RPC error."
+  [response]
+  (or (get-in response [:error :message])
+      (when (get-in response [:result :isError])
+        (or (not-empty (str/join "\n" (keep :text (get-in response [:result :content]))))
+            "Tool call failed"))))
+
+(defn- record-call!
+  "Record a JSON-RPC call and the response it got in the MCP audit log."
+  [audit-ctx session-id {:keys [method params]} response started-at]
+  (let [error-message (response-error response)]
+    (mcp.audit-log/record! (assoc audit-ctx
+                                  :session-id    session-id
+                                  :method        method
+                                  :target        (audit-target method params)
+                                  :arguments     (audit-arguments method params)
+                                  :status        (if error-message "error" "success")
+                                  :error-message error-message
+                                  :duration-ms   (u/since-ms started-at)))))
+
+(defn- dispatch-request
+  "Dispatch a single JSON-RPC request and record it in the MCP audit log. Returns a response map or nil for
+  notifications. Nothing is recorded without an `audit-ctx`."
+  ([msg session-id token-scopes]
+   (dispatch-request msg session-id token-scopes nil))
+  ([msg session-id token-scopes audit-ctx]
+   (let [started-at (u/start-timer)
+         response   (dispatch-request* msg session-id token-scopes)]
+     (when (and audit-ctx (audited-method? (:method msg)))
+       (record-call! audit-ctx session-id msg response started-at))
+     response)))
 
 ;;; ----------------------------------------------------- SSE ------------------------------------------------------
 
@@ -234,11 +299,13 @@
 
       ;; Initialize: create session and return response with session header
       (and (not batch?) (= "initialize" (:method body)))
-      (let [params           (:params body)
+      (let [started-at       (u/start-timer)
+            params           (:params body)
             supports-mcp-ui? (mcp-app-ui-capability? params)
             session-id       (mcp.session/create! user-id {:supports-mcp-ui?
                                                            supports-mcp-ui?})
             init-response (handle-initialize (:id body) (:params body))]
+        (record-call! (audit-context user-id request) session-id body init-response started-at)
         (if (accepts-sse? request)
           (sse-response [init-response] {"Mcp-Session-Id" session-id})
           (json-response 200 init-response {"Mcp-Session-Id" session-id})))
@@ -249,7 +316,8 @@
         (if error
           error
           (let [messages  (if batch? body [body])
-                responses (into [] (keep #(dispatch-request % session-id (:token-scopes request))) messages)]
+                audit-ctx (audit-context user-id request)
+                responses (into [] (keep #(dispatch-request % session-id (:token-scopes request) audit-ctx)) messages)]
             (cond
               (empty? responses)
               {:status 202 :headers {} :body ""}
@@ -334,6 +402,20 @@
 
 ;;; ---------------------------------------------------- Handler ---------------------------------------------------
 
+(defn- record-access-denied!
+  "Record a request the MCP access list refused in the MCP audit log."
+  [user-id request message]
+  (let [body   (:body request)
+        method (cond
+                 (map? body)        (or (get body "method") (get body :method))
+                 (sequential? body) "batch"
+                 :else              (str "http/" (u/lower-case-en (name (:request-method request)))))]
+    (mcp.audit-log/record! (assoc (audit-context user-id request)
+                                  :session-id    (get-in request [:headers "mcp-session-id"])
+                                  :method        method
+                                  :status        "denied"
+                                  :error-message message))))
+
 ;; Source of truth for the route aliases — keep in sync with the route-map in
 ;; [[metabase.api-routes.routes]] and resource-metadata endpoints in [[metabase.oauth-server.api.metadata]].
 (def ^:private endpoint-paths
@@ -365,15 +447,17 @@
            bearer-token (oauth-server/extract-bearer-token request)
            session-auth api/*current-user-id*
            token-scopes (:token-scopes request)]
-       (letfn [(dispatch [user-id token-scopes]
+       (letfn [(dispatch [user-id token-scopes auth-method]
                  (request/with-current-user user-id
                    (if-let [throttle-err (check-throttle user-id)]
                      (respond throttle-err)
                      (try
-                       (let [request (assoc request :token-scopes token-scopes)]
+                       (let [request (assoc request :token-scopes token-scopes :mcp-auth-method auth-method)]
                          (cond
                            (not (mcp-restrictions/user-allowed? user-id))
-                           (respond (json-response 403 (jsonrpc-error nil -32603 (mcp-restrictions/access-denied-message))))
+                           (let [message (mcp-restrictions/access-denied-message)]
+                             (record-access-denied! user-id request message)
+                             (respond (json-response 403 (jsonrpc-error nil -32603 message))))
 
                            (= :post (:request-method request))
                            (respond (handle-post user-id request))
@@ -395,12 +479,12 @@
            ;; Respect the scope set attached to an authenticated request. Sessions without one
            ;; retain unrestricted access.
            session-auth
-           (dispatch session-auth (or token-scopes #{::scope/unrestricted}))
+           (dispatch session-auth (or token-scopes #{::scope/unrestricted}) :session)
 
            ;; Bearer token auth — validate and extract scopes
            bearer-token
            (if-let [{:keys [user-id scopes]} (validate-bearer-token bearer-token)]
-             (dispatch user-id scopes)
+             (dispatch user-id scopes :oauth)
              (respond (json-response 401 (jsonrpc-error nil -32603 "Invalid bearer token")
                                      {"WWW-Authenticate" "Bearer error=\"invalid_token\""})))
 

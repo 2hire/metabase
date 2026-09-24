@@ -1254,10 +1254,14 @@
   mcp-restrictions
   {:team "Metabot"
    :api  #{metabase.mcp-restrictions.api
+           metabase.mcp-restrictions.audit-log
            metabase.mcp-restrictions.core
            metabase.mcp-restrictions.init}
    :uses #{api
+           request
            settings
+           task
+           task-history
            util}
    :model-imports #{:model/Card
                     :model/Database

@@ -1,7 +1,7 @@
 (ns metabase.mcp-restrictions.settings
   (:require
    [metabase.settings.core :as setting :refer [defsetting]]
-   [metabase.util.i18n :refer [deferred-tru]]))
+   [metabase.util.i18n :refer [deferred-tru tru]]))
 
 (defn- normalize-ids
   "Coerce a setting value to a sorted vector of distinct positive integer IDs."
@@ -95,3 +95,26 @@
   :doc        false
   :getter     #(normalize-ids (setting/get-value-of-type :json :mcp-non-sensitive-field-ids))
   :setter     #(setting/set-value-of-type! :json :mcp-non-sensitive-field-ids (some-> % normalize-ids)))
+
+(defsetting mcp-audit-log-enabled?
+  (deferred-tru "Whether the requests made by MCP clients are recorded in the MCP audit log.")
+  :type       :boolean
+  :default    true
+  :visibility :admin
+  :export?    false
+  :audit      :getter
+  :doc        false)
+
+(defsetting mcp-audit-log-retention-days
+  (deferred-tru "How many days MCP audit log entries are kept before they are deleted. Set it to 0 to keep them forever.")
+  :type       :integer
+  :default    90
+  :visibility :admin
+  :export?    false
+  :audit      :getter
+  :doc        false
+  :setter     (fn [new-value]
+                (let [days (cond-> new-value (string? new-value) parse-long)]
+                  (when (and days (neg? days))
+                    (throw (ex-info (tru "The MCP audit log retention must be zero or more.") {:status-code 400})))
+                  (setting/set-value-of-type! :integer :mcp-audit-log-retention-days days))))

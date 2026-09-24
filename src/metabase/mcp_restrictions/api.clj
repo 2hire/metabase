@@ -3,8 +3,11 @@
   (:require
    [metabase.api.common :as api]
    [metabase.api.macros :as api.macros]
+   [metabase.mcp-restrictions.audit-log :as audit-log]
    [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp-restrictions.settings :as mcp-restrictions.settings]
+   [metabase.request.core :as request]
+   [metabase.util.malli.schema :as ms]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
@@ -55,3 +58,25 @@
      :excluded  (with-locations
                   (when (seq excluded-ids)
                     (t2/select [:model/Field :id :name :table_id] :id [:in excluded-ids])))}))
+
+(api.macros/defendpoint :get "/audit-log"
+  :- [:map
+      [:total   ms/IntGreaterThanOrEqualToZero]
+      [:limit   ms/PositiveInt]
+      [:offset  ms/IntGreaterThanOrEqualToZero]
+      [:methods [:sequential :string]]
+      [:data    [:sequential :map]]]
+  "The requests MCP clients made to the MCP server, newest first, optionally filtered by user, JSON-RPC method and
+  outcome. Also returns the methods that appear in the log, for filtering."
+  [_route-params
+   {:keys [user-id method status]} :- [:map
+                                       [:user-id {:optional true} [:maybe ms/PositiveInt]]
+                                       [:method  {:optional true} [:maybe ms/NonBlankString]]
+                                       [:status  {:optional true} [:maybe (into [:enum] audit-log/statuses)]]]]
+  (api/check-superuser)
+  (let [limit  (or (request/limit) 50)
+        offset (or (request/offset) 0)]
+    (merge {:limit   limit
+            :offset  offset
+            :methods (audit-log/distinct-methods)}
+           (audit-log/list-entries {:user-id user-id :method method :status status} limit offset))))

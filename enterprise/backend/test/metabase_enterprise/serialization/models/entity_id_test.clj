@@ -65,6 +65,7 @@
     :model/CollectionPermissionGraphRevision
     :model/DashboardCardSeries
     :model/LoginHistory
+    :model/McpAuditLog
     :model/McpQueryHandle
     :model/FieldValues
     :model/MetabotConversation

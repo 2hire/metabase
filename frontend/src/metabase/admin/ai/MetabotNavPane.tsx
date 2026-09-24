@@ -37,6 +37,11 @@ export function MetabotNavPane() {
             label={t`Authorizations`}
             path="/admin/metabot/mcp/authorizations"
           />
+          <AdminNavItem
+            disabled={!areAiFeaturesEnabled}
+            label={t`Audit log`}
+            path="/admin/metabot/mcp/audit-log"
+          />
         </AdminNavItem>
         {AiControlsNavItems}
         {AiAnalyticsNavItems}

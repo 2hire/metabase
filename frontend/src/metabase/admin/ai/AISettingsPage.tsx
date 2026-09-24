@@ -24,6 +24,7 @@ import { AIProviderSettingsSection } from "./AIProviderSettingsSection";
 import { EmbeddedMetabotUpsell } from "./EmbeddedMetabotUpsell";
 import { McpAccessListSettings } from "./McpAccessListSettings";
 import { McpAppsSettings } from "./McpAppsSettings";
+import { McpAuditLogSettings } from "./McpAuditLogSettings";
 import { McpRestrictedDataSettings } from "./McpRestrictedDataSettings";
 import { McpSensitiveFieldsSettings } from "./McpSensitiveFieldsSettings";
 import { MetabotSettingsPanel } from "./MetabotSettingsPanel";
@@ -117,6 +118,8 @@ export function McpSettingsPage() {
         <McpRestrictedDataSettings />
 
         <McpSensitiveFieldsSettings />
+
+        <McpAuditLogSettings />
 
         <AgentApiSettingsSection disabled={!areAiFeaturesEnabled} />
       </DisabledSection>

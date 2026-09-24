@@ -1,0 +1,149 @@
+## Append-only audit trail of the requests MCP clients make to the MCP server: one row per JSON-RPC
+## call (initialize, tools/call, tools/list, resources/read, ...) and one per request refused by the
+## MCP access list. Kept in its own table, rather than audit_log, so it works without the audit-app
+## premium feature. Rows older than the `mcp-audit-log-retention-days` setting are deleted by a
+## scheduled task.
+
+databaseChangeLog:
+  - changeSet:
+      id: v63.mcpal1
+      author: matteofilippi
+      comment: Create mcp_audit_log table to audit the requests made by MCP clients
+      changes:
+        - createTable:
+            tableName: mcp_audit_log
+            remarks: Append-only audit log of the requests made by MCP clients
+            columns:
+              - column:
+                  name: id
+                  type: bigint
+                  remarks: Auto-incrementing primary key
+                  autoIncrement: true
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: ${timestamp_type}
+                  remarks: When the request was received
+                  defaultValueComputed: current_timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: user_id
+                  type: int
+                  remarks: FK to core_user.id of the user the MCP client acts as; nulled out if the user is deleted
+                  constraints:
+                    nullable: true
+              - column:
+                  name: mcp_session_id
+                  type: varchar(254)
+                  remarks: MCP session the request belongs to; null when the client sent none
+                  constraints:
+                    nullable: true
+              - column:
+                  name: auth_method
+                  type: varchar(16)
+                  remarks: "How the client authenticated: oauth (bearer token) or session (cookie or API key)"
+                  constraints:
+                    nullable: false
+              - column:
+                  name: method
+                  type: varchar(64)
+                  remarks: JSON-RPC method, e.g. tools/call or resources/read
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target
+                  type: varchar(254)
+                  remarks: Tool name for tools/call, resource URI for resources/read, client name for initialize
+                  constraints:
+                    nullable: true
+              - column:
+                  name: arguments
+                  type: ${text.type}
+                  remarks: JSON-encoded request arguments, with secret-looking keys masked and long payloads truncated
+                  constraints:
+                    nullable: true
+              - column:
+                  name: status
+                  type: varchar(16)
+                  remarks: "Outcome of the request: success, error, or denied"
+                  constraints:
+                    nullable: false
+              - column:
+                  name: error_message
+                  type: ${text.type}
+                  remarks: Error returned to the client, truncated; null on success
+                  constraints:
+                    nullable: true
+              - column:
+                  name: duration_ms
+                  type: int
+                  remarks: How long the server took to handle the request, in milliseconds
+                  constraints:
+                    nullable: true
+              - column:
+                  name: ip_address
+                  type: varchar(64)
+                  remarks: IP address the request came from
+                  constraints:
+                    nullable: true
+              - column:
+                  name: user_agent
+                  type: varchar(254)
+                  remarks: User-Agent header of the request, truncated
+                  constraints:
+                    nullable: true
+      rollback:
+        - dropTable:
+            tableName: mcp_audit_log
+
+  - changeSet:
+      id: v63.mcpal2
+      author: matteofilippi
+      comment: Index mcp_audit_log.created_at for listing and retention cleanup
+      changes:
+        - createIndex:
+            tableName: mcp_audit_log
+            indexName: idx_mcp_audit_log_created_at
+            columns:
+              - column:
+                  name: created_at
+      rollback:
+        - dropIndex:
+            tableName: mcp_audit_log
+            indexName: idx_mcp_audit_log_created_at
+
+  - changeSet:
+      id: v63.mcpal3
+      author: matteofilippi
+      comment: Index mcp_audit_log.user_id for filtering by user and for the FK
+      changes:
+        - createIndex:
+            tableName: mcp_audit_log
+            indexName: idx_mcp_audit_log_user_id
+            columns:
+              - column:
+                  name: user_id
+      rollback:
+        - dropIndex:
+            tableName: mcp_audit_log
+            indexName: idx_mcp_audit_log_user_id
+
+  - changeSet:
+      id: v63.mcpal4
+      author: matteofilippi
+      comment: FK from mcp_audit_log.user_id to core_user, set null on delete
+      changes:
+        - addForeignKeyConstraint:
+            baseTableName: mcp_audit_log
+            baseColumnNames: user_id
+            referencedTableName: core_user
+            referencedColumnNames: id
+            constraintName: fk_mcp_audit_log_user_id
+            onDelete: SET NULL
+      rollback:
+        - dropForeignKeyConstraint:
+            baseTableName: mcp_audit_log
+            constraintName: fk_mcp_audit_log_user_id
