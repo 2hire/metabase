@@ -3,6 +3,7 @@
    [clojure.set :as set]
    [metabase.api.common :as api]
    [metabase.lib.core :as lib]
+   [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.metabot.metadata-perms :as metabot.perms]
    [metabase.metabot.tools.util :as metabot.tools.u]
    [metabase.parameters.field-values :as params.field-values]
@@ -33,7 +34,12 @@
   `Field` row. The restriction check uses the persisted Field's owning table rather than the
   caller's column metadata, since saved Card result metadata can be stale or user-edited."
   [{:keys [id fingerprint]} limit]
-  (if id
+  (cond
+    ;; A fingerprint is exactly the aggregates (min, max, averages...) MCP clients can't compute on a sensitive field.
+    (mcp-restrictions/sensitive-field? id)
+    {}
+
+    id
     (let [field (t2/select-one :model/Field :id id)
           table-id (:table_id field)
           fvs (params.field-values/get-or-create-field-values! field)
@@ -42,6 +48,8 @@
           fp (when-not restricted?
                (or fingerprint (get-or-create-fingerprint! field)))]
       (build-field-statistics fvs fp limit))
+
+    :else
     (build-field-statistics nil fingerprint limit)))
 
 (defn- field-metadata-output

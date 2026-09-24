@@ -80,9 +80,10 @@
 (defn field-id->field-values-for-current-user
   "Fetch *existing* FieldValues for a sequence of `field-ids` for the current User. Values are returned as a map of
     {field-id FieldValues-instance}
-  Returns `nil` if `field-ids` is empty of no matching FieldValues exist."
+  Returns `nil` if `field-ids` is empty of no matching FieldValues exist. Sensitive fields are left out for MCP clients."
   [field-ids]
-  (let [fields                 (when (seq field-ids)
+  (let [field-ids              (remove mcp-restrictions/sensitive-field? field-ids)
+        fields                 (when (seq field-ids)
                                  (t2/hydrate (t2/select :model/Field :id [:in (set field-ids)]) :table))
         {normal-fields   false
          advanced-fields true} (group-by requires-advanced-field-value? fields)]
@@ -178,17 +179,18 @@
 (defn get-or-create-field-values!
   "Gets or creates field values.
 
-  MCP clients get nothing for fields of restricted tables, and only ever read the cache: computing values runs a query
-  under their restrictions, and whatever it returned (or its failure, which empties the values) would be stored for
-  every user."
+  MCP clients get nothing for fields of restricted tables or sensitive fields, and only ever read the cache: computing
+  values runs a query under their restrictions, and whatever it returned (masked values, or nothing when it fails)
+  would be stored for every user."
   ([field] (get-or-create-field-values! field nil))
   ([field constraints]
    (cond
      (not (mcp-restrictions/enforced?))
      (get-or-create-field-values!* field constraints)
 
-     (mcp-restrictions/restricted-table? (t2/select-one-fn :db_id :model/Table :id (:table_id field))
-                                         (:table_id field))
+     (or (mcp-restrictions/restricted-table? (t2/select-one-fn :db_id :model/Table :id (:table_id field))
+                                             (:table_id field))
+         (mcp-restrictions/sensitive-field? (u/the-id field)))
      (empty-field-values field)
 
      :else

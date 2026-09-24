@@ -1,6 +1,6 @@
 (ns metabase.mcp-restrictions.core
-  "Admin-configured limits on AI clients: who may use the MCP server (see [[user-allowed?]]), and which databases and
-  tables are off-limits to them.
+  "Admin-configured limits on AI clients: who may use the MCP server (see [[user-allowed?]]), which databases and
+  tables are off-limits to them, and which fields hold secrets they must never see (see [[sensitive-fields]]).
 
   The restriction only applies while [[*enforced?*]] is bound to true, which the AI entry points do for the lifetime of
   a request: the MCP server and the Agent API it dispatches to, requests authenticated with an OAuth access token from
@@ -20,6 +20,7 @@
   - FieldValues are read-only, so a restricted request never recomputes, empties or deletes the shared cache."
   (:require
    [clojure.string :as str]
+   [medley.core :as m]
    [metabase.api.common :as api]
    [metabase.mcp-restrictions.settings :as mcp-restrictions.settings]
    [metabase.settings.core :as setting]
@@ -35,12 +36,17 @@
   [[with-restrictions-enforced]]; never read it directly outside this namespace."
   false)
 
+(def ^:dynamic ^:private *sensitive-fields-cache*
+  "Per-request cache of [[sensitive-fields]] by database ID, bound by [[with-restrictions-enforced]]."
+  nil)
+
 (declare secret-name?)
 
 (defn do-with-restrictions-enforced
   "Impl for [[with-restrictions-enforced]]."
   [thunk]
-  (binding [*enforced?* true]
+  (binding [*enforced?*                true
+            *sensitive-fields-cache* (atom {})]
     (setting/with-extra-sensitive-settings (comp secret-name? name)
       (thunk))))
 
@@ -271,3 +277,161 @@
   "The message shown to a user who is not on the MCP access list."
   []
   (tru "You are not allowed to use the MCP server. Ask an admin to add you to the MCP access list."))
+
+;;; ----------------------------------------------- Sensitive fields -----------------------------------------------
+
+(def masked-value
+  "What MCP clients see in place of a sensitive string. Other sensitive values (numbers, dates) become nil, so column
+  types stay consistent for formatting and fingerprinting."
+  "••••")
+
+(defn mask-value
+  "The masked form of a sensitive value `v`."
+  [v]
+  (cond
+    (nil? v)    nil
+    (string? v) masked-value
+    :else       nil))
+
+(defn sensitive-field-name?
+  "Whether a field called `field-name` looks like it holds a secret. See [[secret-name?]]."
+  [field-name]
+  (secret-name? field-name))
+
+(def ^:private secret-name-like-patterns
+  "SQL `LIKE` patterns that pre-filter candidate field names in the app DB before [[sensitive-field-name?]] decides."
+  ["%pass%" "%pwd%" "%secret%" "%token%" "%key%" "%credential%" "%salt%" "%otp%"])
+
+(defn- in-database-clause
+  "Where clause limiting fields to those of `database-id`, or nil for every database."
+  [database-id]
+  (when database-id
+    [:in :table_id ^:allow-subquery {:select [:id] :from [:metabase_table] :where [:= :db_id database-id]}]))
+
+(defn- detected-sensitive-fields
+  "Active fields in `database-id` (every database when nil) whose name looks like a secret."
+  [database-id]
+  (->> (t2/select [:model/Field :id :name :table_id]
+                  {:where [:and
+                           [:= :active true]
+                           (into [:or] (for [pattern secret-name-like-patterns]
+                                         [:like [:lower :name] pattern]))
+                           (in-database-clause database-id)]})
+       (filter (comp sensitive-field-name? :name))))
+
+(defn- compute-sensitive-fields
+  [database-id]
+  (let [manual-ids   (set (mcp-restrictions.settings/mcp-sensitive-field-ids))
+        excluded-ids (set (mcp-restrictions.settings/mcp-non-sensitive-field-ids))
+        manual       (when (seq manual-ids)
+                       (t2/select [:model/Field :id :name :table_id]
+                                  {:where [:and [:in :id manual-ids] (in-database-clause database-id)]}))
+        metadata     (t2/select [:model/Field :id :name :table_id]
+                                {:where [:and
+                                         [:= :active true]
+                                         [:= :visibility_type "sensitive"]
+                                         (in-database-clause database-id)]})
+        detected     (when (mcp-restrictions.settings/mcp-sensitive-fields-auto-detect)
+                       (detected-sensitive-fields database-id))]
+    (->> (concat (map #(assoc % :source :manual) manual)
+                 (map #(assoc % :source :metadata) metadata)
+                 (map #(assoc % :source :detected) detected))
+         (remove (comp excluded-ids :id))
+         (m/distinct-by :id)
+         (mapv #(into {} %)))))
+
+(defn sensitive-fields
+  "The fields in `database-id` (every database when nil) whose values MCP clients can't see: the ones an admin added,
+  the ones marked sensitive in the table metadata, and the ones whose name looks like a secret (when auto-detection is
+  on), minus the ones an admin excluded. Each is `{:id :name :table_id}` plus `:source`: `:manual`, `:metadata` or
+  `:detected`. Computed once per database for the lifetime of a restricted request."
+  ([] (sensitive-fields nil))
+  ([database-id]
+   (if-let [cache *sensitive-fields-cache*]
+     (or (get @cache database-id)
+         (get (swap! cache assoc database-id (compute-sensitive-fields database-id)) database-id))
+     (compute-sensitive-fields database-id))))
+
+(defn sensitive-field?
+  "Whether the field with `field-id` is sensitive for the current request. Always false unless the MCP restrictions
+  are enforced."
+  [field-id]
+  (boolean
+   (and *enforced?*
+        field-id
+        (when-let [database-id (:db_id (t2/query-one {:select [:t.db_id]
+                                                      :from   [[:metabase_field :f]]
+                                                      :join   [[:metabase_table :t] [:= :t.id :f.table_id]]
+                                                      :where  [:= :f.id field-id]}))]
+          (some #(= field-id (:id %)) (sensitive-fields database-id))))))
+
+(defn- table-database-id
+  "The database of the table with `table-id`, cached for the lifetime of a restricted request."
+  [table-id]
+  (let [fetch #(t2/select-one-fn :db_id :model/Table :id table-id)]
+    (if-let [cache *sensitive-fields-cache*]
+      (let [k [::table-database table-id]]
+        (if (contains? @cache k)
+          (get @cache k)
+          (get (swap! cache assoc k (fetch)) k)))
+      (fetch))))
+
+(defn sensitive-field-in-table?
+  "Like [[sensitive-field?]] for a field whose table is already known, with no app DB query per field once the
+  table's database has been seen in the request."
+  [table-id field-id]
+  (boolean
+   (and *enforced?*
+        table-id
+        field-id
+        (when-let [database-id (table-database-id table-id)]
+          (some #(= field-id (:id %)) (sensitive-fields database-id))))))
+
+(def ^:private secret-value-pattern
+  "Values that are secrets whatever column they come from: JSON Web Tokens, PEM private keys, AWS access key IDs,
+  OpenAI/Anthropic/Stripe-style secret keys, GitHub and Slack tokens, Google API keys and bcrypt password hashes."
+  (re-pattern
+   (str/join "|" ["eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*"
+                  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+                  "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b"
+                  "\\b(?:sk|rk)[-_](?:live[-_]|test[-_]|ant[-_]|proj[-_])?[A-Za-z0-9_-]{20,}"
+                  "\\b(?:gh[pousr]_[A-Za-z0-9]{30,}|xox[abprs]-[A-Za-z0-9-]{10,})"
+                  "\\bAIza[0-9A-Za-z_-]{35}\\b"
+                  "\\$2[abxy]?\\$\\d{2}\\$[./A-Za-z0-9]{53}"])))
+
+(defn mask-secret-like-value
+  "Replace anything in string `v` that looks like a secret with [[masked-value]]. Non-strings are returned unchanged."
+  [v]
+  (if (string? v)
+    (str/replace v secret-value-pattern masked-value)
+    v))
+
+(defn sensitive-field-exception
+  "The exception thrown when an AI client tries to use a sensitive field in a way that could reveal its values."
+  []
+  (ex-info (tru "This query uses a sensitive field in a way that could reveal its values, which is not allowed for MCP clients. You can select sensitive fields, but not filter, sort, group or aggregate on them.")
+           {:status-code 403
+            :type        :missing-required-permissions}))
+
+(defn- table-name-pattern
+  "Case-insensitive pattern matching `table-name` as a whole SQL identifier, quoted or not."
+  ^java.util.regex.Pattern [table-name]
+  (re-pattern (str "(?i)(?<![\\p{L}\\p{N}_$])" (java.util.regex.Pattern/quote table-name) "(?![\\p{L}\\p{N}_$])")))
+
+(defn check-native-sql-sensitive-tables!
+  "Throw a 403 if any of the `sqls` native query strings run against `database-id` names a table that holds a sensitive
+  field. Native results can't be traced back to fields, and SQL can read a whole row without naming its columns
+  (`row_to_json(t)`, `t::text`), so these tables are only reachable through MBQL, where the values are masked.
+
+  Any mention of such a table's name as a standalone identifier counts, including inside a string literal, so false
+  positives block a query rather than leak data. SQL that reaches such a table without naming it (identifier escapes
+  like `U&\"...\"`, a view over it, SQL assembled at run time from pieces) isn't recognized: restrict the table or its
+  database when that matters."
+  [database-id sqls]
+  (when (and *enforced?* database-id (seq sqls))
+    (when-let [table-ids (not-empty (into #{} (keep :table_id) (sensitive-fields database-id)))]
+      (let [patterns (map table-name-pattern (t2/select-fn-set :name :model/Table :id [:in table-ids]))]
+        (when (some (fn [sql] (some #(re-find % sql) patterns)) sqls)
+          (throw (ex-info (tru "SQL queries on tables with sensitive fields are not available to MCP clients. Use the query builder tools (construct_query) instead: sensitive values are masked there.")
+                          {:status-code 403
+                           :type        :missing-required-permissions})))))))

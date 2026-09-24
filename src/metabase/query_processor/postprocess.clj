@@ -12,6 +12,7 @@
    [metabase.query-processor.middleware.format-rows :as format-rows]
    [metabase.query-processor.middleware.large-int :as large-int]
    [metabase.query-processor.middleware.limit :as limit]
+   [metabase.query-processor.middleware.mcp-restrictions :as qp.mcp-restrictions]
    [metabase.query-processor.middleware.pivot-export :as pivot-export]
    [metabase.query-processor.middleware.results-metadata :as results-metadata]
    [metabase.query-processor.middleware.visualization-settings :as viz-settings]
@@ -46,6 +47,8 @@
    #'large-int/convert-large-int-to-string
    #'viz-settings/update-viz-settings
    #'qp.cumulative-aggregations/sum-cumulative-aggregation-columns
+   ;; right inside annotation, so it sees annotated column metadata and masks rows before anything else here sees them
+   #'qp.mcp-restrictions/mask-sensitive-values
    #'annotate/add-column-info
    #'fetch-source-query/add-dataset-info])
 ;; ↑↑↑ POST-PROCESSING ↑↑↑ happens from BOTTOM TO TOP

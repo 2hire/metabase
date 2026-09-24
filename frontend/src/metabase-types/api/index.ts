@@ -32,6 +32,7 @@ export * from "./group";
 export * from "./icon";
 export * from "./insight";
 export * from "./llm";
+export * from "./mcp-restrictions";
 export * from "./logger";
 export * from "./measure";
 export * from "./metabot";

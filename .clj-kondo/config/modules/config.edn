@@ -1253,10 +1253,15 @@
 
   mcp-restrictions
   {:team "Metabot"
-   :api  #{metabase.mcp-restrictions.core
+   :api  #{metabase.mcp-restrictions.api
+           metabase.mcp-restrictions.core
            metabase.mcp-restrictions.init}
-   :uses #{api settings util}
+   :uses #{api
+           settings
+           util}
    :model-imports #{:model/Card
+                    :model/Database
+                    :model/Field
                     :model/PermissionsGroupMembership
                     :model/Table
                     :model/User}}

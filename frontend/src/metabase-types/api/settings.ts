@@ -848,6 +848,9 @@ export interface EnterpriseSettings extends Settings {
   "mcp-restricted-table-ids": number[] | null;
   "mcp-allowed-user-ids": number[] | null;
   "mcp-allowed-group-ids": number[] | null;
+  "mcp-sensitive-fields-auto-detect": boolean | null;
+  "mcp-sensitive-field-ids": number[] | null;
+  "mcp-non-sensitive-field-ids": number[] | null;
   "transforms-meter-locked": boolean | null;
   /**
    * @deprecated
