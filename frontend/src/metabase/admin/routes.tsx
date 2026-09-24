@@ -75,6 +75,7 @@ import type { State } from "metabase/redux/store";
 import { getTokenFeature } from "metabase/selectors/settings";
 
 import { AISettingsPage, McpSettingsPage } from "./ai/AISettingsPage";
+import { McpAuditLogPage } from "./ai/McpAuditLogPage";
 import { MetabotAdminLayout } from "./ai/MetabotAdminLayout";
 import { OAuthAuthorizationsPage } from "./ai/OAuthAuthorizationsPage";
 import { ModelPersistenceConfiguration } from "./performance/components/ModelPersistenceConfiguration";
@@ -298,6 +299,7 @@ export const getRoutes = (
               path="mcp/authorizations"
               component={OAuthAuthorizationsPage}
             />
+            <Route path="mcp/audit-log" component={McpAuditLogPage} />
           </Route>
           <Route
             key="layout"

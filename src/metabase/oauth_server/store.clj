@@ -28,6 +28,17 @@
       (throw (ex-info "Expected a valid user ID, but it was not a positive integer"
                       {:user-id user-id}))))
 
+(defn- active-user-token
+  "`token-row` when the user it was issued to is still active, nil otherwise, so deactivating a user cuts off the MCP
+  clients and CLIs acting as them right away, refreshes included. Rows with no user (grants that don't act as a user)
+  pass through."
+  [token-row]
+  (when token-row
+    (let [user-id (:user_id token-row)]
+      (when (or (nil? user-id)
+                (t2/exists? :model/User :id user-id :is_active true))
+        token-row))))
+
 (def ^:private client-db-columns
   "DB columns to select/project for OAuthClient rows."
   [:client_id :client_type :redirect_uris :grant_types :response_types :scopes :registration_type
@@ -187,6 +198,7 @@
 
   (get-access-token [_ token]
     (-> (t2/select-one :model/OAuthAccessToken :token token :revoked_at nil)
+        active-user-token
         db-row->access-token))
 
   (save-refresh-token [_ token user-id client-id scope expiry resource]
@@ -201,6 +213,7 @@
 
   (get-refresh-token [_ token]
     (-> (t2/select-one :model/OAuthRefreshToken :token token :revoked_at nil)
+        active-user-token
         db-row->refresh-token))
 
   (revoke-token [_ token]

@@ -357,7 +357,7 @@
 
 (defn- capture-streaming-response
   "Execute a StreamingResponse in-process by writing to a ByteArrayOutputStream,
-   then parse the JSON output and return it as MCP text content.
+   then parse the JSON output and return it as MCP text content, flagged `isError` when the query failed.
 
    This buffers the full response in memory (~120KB for 200 rows), which is fine for
    the row limits we enforce."
@@ -366,7 +366,11 @@
         canceled-chan (a/promise-chan)
         f            (.f response)]
     (f baos canceled-chan)
-    (text-content (json/decode+kw (.toString baos "UTF-8")))))
+    (let [body (json/decode+kw (.toString baos "UTF-8"))]
+      ;; A query that fails once it's running (bad SQL, restricted data) still streams a 202 whose body is
+      ;; `{:status "failed" :error ...}`: flag it as a tool error so the client and the audit log see it failed.
+      (cond-> (text-content body)
+        (and (map? body) (= "failed" (some-> (:status body) name))) (assoc :isError true)))))
 
 (defn- deliver-agent-api-response
   "Dispatch to agent API routes and deliver response to promise.

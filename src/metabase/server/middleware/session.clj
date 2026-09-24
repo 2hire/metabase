@@ -26,6 +26,7 @@
    [metabase.app-db.core :as mdb]
    [metabase.config.core :as config]
    [metabase.initialization-status.core :as init-status]
+   [metabase.mcp-restrictions.audit-log :as mcp.audit-log]
    [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.mcp.core :as mcp]
    [metabase.oauth-server.core :as oauth-server]
@@ -362,6 +363,12 @@
      ;; merging it whole both authenticates the request and records the granted scopes.
      (dissoc (or session-info api-key-info oauth-info mcp-ui-info) :auth-provider)
      (when auth-method {:embedding/auth-method auth-method})
+     ;; Which credential authenticated the request, whatever the route; the MCP audit log records it.
+     (when-let [credential (cond session-info :session
+                                 api-key-info :api-key
+                                 oauth-info   :oauth
+                                 mcp-ui-info  :mcp-ui)]
+       {:metabase-credential credential})
      ;; Recorded from the credential itself rather than derived from `auth-method`, which is overridden by the route
      ;; (e.g. "metabot", "agent-api") and so can't tell which credential authenticated the request.
      (when (and (not session-info) (not api-key-info) (or oauth-info mcp-ui-info))
@@ -396,6 +403,21 @@
   [request]
   (boolean (::ai-client? request)))
 
+(defn- record-ai-client-request!
+  "Record a REST or Agent API request an AI client made directly, with its outcome, in the MCP audit log. The body
+  hasn't been parsed yet at this point, so only the query string is kept as the arguments."
+  [request started-at status error-message]
+  (mcp.audit-log/record! {:user-id       (:metabase-user-id request)
+                          :auth-method   (:metabase-credential request)
+                          :method        (str "http/" (u/lower-case-en (name (:request-method request))))
+                          :target        (:uri request)
+                          :arguments     (some->> (:query-string request) not-empty (hash-map :query))
+                          :status        status
+                          :error-message error-message
+                          :duration-ms   (u/since-ms started-at)
+                          :ip-address    (request/ip-address request)
+                          :user-agent    (get-in request [:headers "user-agent"])}))
+
 (defn bind-current-user
   "Middleware that binds [[metabase.api.common/*current-user*]], [[*current-user-id*]], [[*is-superuser?*]],
   [[*current-user-permissions-set*]], and [[metabase.settings.models.setting/*user-local-values*]].
@@ -411,7 +433,9 @@
 
   Requests authenticated as an AI client are rejected when the user is not on the MCP access list. Otherwise they run
   with the MCP data restrictions enforced, and may only write through the endpoints
-  [[mcp-restrictions/ai-client-write-allowed?]] lets through."
+  [[mcp-restrictions/ai-client-write-allowed?]] lets through. Both the requests and the refusals go in the MCP audit
+  log. The MCP endpoints are the exception: they check the access list and record their JSON-RPC calls themselves,
+  once the body is parsed."
   [handler]
   (fn [request respond raise]
     (with-current-user-for-request request
@@ -419,18 +443,37 @@
         (not (ai-client-request? request))
         (handler request respond raise)
 
-        ;; Tokens issued before the user was removed from the MCP access list stop working right away.
-        (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
-        (respond (mcp-restrictions/forbidden-response "mcp_access_denied"
-                                                      (mcp-restrictions/access-denied-message)))
-
-        (not (mcp-restrictions/ai-client-write-allowed? (:request-method request) (:uri request)))
-        (respond (mcp-restrictions/forbidden-response "mcp_write_denied"
-                                                      (mcp-restrictions/ai-client-write-denied-message)))
+        (mcp-restrictions/mcp-endpoint? (:uri request))
+        (mcp-restrictions/with-restrictions-enforced
+          (handler request respond raise))
 
         :else
-        (mcp-restrictions/with-restrictions-enforced
-          (handler request respond raise))))))
+        (let [started-at (u/start-timer)
+              record!    (fn [status error-message]
+                           (record-ai-client-request! request started-at status error-message))]
+          (cond
+            ;; Tokens issued before the user was removed from the MCP access list stop working right away.
+            (not (mcp-restrictions/user-allowed? (:metabase-user-id request)))
+            (let [message (mcp-restrictions/access-denied-message)]
+              (record! "denied" message)
+              (respond (mcp-restrictions/forbidden-response "mcp_access_denied" message)))
+
+            (not (mcp-restrictions/ai-client-write-allowed? (:request-method request) (:uri request)))
+            (let [message (mcp-restrictions/ai-client-write-denied-message)]
+              (record! "denied" message)
+              (respond (mcp-restrictions/forbidden-response "mcp_write_denied" message)))
+
+            :else
+            (mcp-restrictions/with-restrictions-enforced
+              (handler request
+                       (fn [response]
+                         (let [status (or (:status response) 200)]
+                           (record! (if (< status 400) "success" "error")
+                                    (when (>= status 400) (str "HTTP " status))))
+                         (respond response))
+                       (fn [e]
+                         (record! "error" (or (ex-message e) (.getName (class e))))
+                         (raise e))))))))))
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                         session activity tracking                                              |

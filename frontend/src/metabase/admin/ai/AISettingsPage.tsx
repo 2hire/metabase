@@ -24,6 +24,7 @@ import { AIProviderSettingsSection } from "./AIProviderSettingsSection";
 import { EmbeddedMetabotUpsell } from "./EmbeddedMetabotUpsell";
 import { McpAccessListSettings } from "./McpAccessListSettings";
 import { McpAppsSettings } from "./McpAppsSettings";
+import { McpAuditLogSettings } from "./McpAuditLogSettings";
 import { McpRestrictedDataSettings } from "./McpRestrictedDataSettings";
 import { McpSensitiveFieldsSettings } from "./McpSensitiveFieldsSettings";
 import { MetabotSettingsPanel } from "./MetabotSettingsPanel";
@@ -120,6 +121,10 @@ export function McpSettingsPage() {
 
         <AgentApiSettingsSection disabled={!areAiFeaturesEnabled} />
       </DisabledSection>
+
+      {/* Outside the disabled section: the nightly purge applies the retention and the recorded entries stay
+          readable even with AI features turned off. */}
+      <McpAuditLogSettings />
     </SettingsPageWrapper>
   );
 }

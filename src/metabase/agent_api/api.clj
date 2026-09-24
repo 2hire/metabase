@@ -20,6 +20,7 @@
    [metabase.lib-be.schema :as lib-be.schema]
    [metabase.lib.core :as lib]
    [metabase.lib.schema.common :as lib.schema.common]
+   [metabase.mcp-restrictions.audit-log :as mcp.audit-log]
    [metabase.mcp-restrictions.core :as mcp-restrictions]
    [metabase.metabot.config :as metabot.config]
    [metabase.metabot.core :as metabot]
@@ -1657,10 +1658,21 @@
   (fn [request respond raise]
     (if (mcp-restrictions/user-allowed? api/*current-user-id*)
       (handler request respond raise)
-      (respond {:status  403
-                :headers {"Content-Type" "application/json"}
-                :body    {:error   "mcp_access_denied"
-                          :message (mcp-restrictions/access-denied-message)}}))))
+      (let [message (mcp-restrictions/access-denied-message)]
+        ;; AI clients with an OAuth token were already refused (and recorded) by the session middleware, and the MCP
+        ;; server checks the access list before dispatching here, so this is a session, API key or JWT client.
+        (mcp.audit-log/record! {:user-id       api/*current-user-id*
+                                :auth-method   (or (:metabase-credential request) :jwt)
+                                :method        (str "http/" (u/lower-case-en (name (:request-method request))))
+                                :target        (:uri request)
+                                :status        "denied"
+                                :error-message message
+                                :ip-address    (request/ip-address request)
+                                :user-agent    (get-in request [:headers "user-agent"])})
+        (respond {:status  403
+                  :headers {"Content-Type" "application/json"}
+                  :body    {:error   "mcp_access_denied"
+                            :message message}})))))
 
 (def +auth
   "Agent API authentication middleware. Supports both session-based and stateless JWT authentication, and enforces the

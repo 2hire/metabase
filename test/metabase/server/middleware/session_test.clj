@@ -210,6 +210,7 @@
                                :is-superuser?           false
                                :is-data-analyst?        false
                                :user-locale             nil
+                               :metabase-credential     :api-key
                                :embedding/auth-method   "api-key"})
                    (#'mw.session/merge-current-user-info req)))))
         (testing "Include :is-group-manager? if we have EE + :advanced-permissions "
@@ -220,6 +221,7 @@
                                  :is-data-analyst?        false
                                  :is-group-manager?       false
                                  :user-locale             nil
+                                 :metabase-credential     :api-key
                                  :embedding/auth-method   "api-key"})
                      (#'mw.session/merge-current-user-info req))))))))))
 

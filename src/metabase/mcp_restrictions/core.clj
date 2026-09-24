@@ -230,6 +230,12 @@
    [#{:put}               #"/api/collection/\d+"]
    [#{:post :delete}      #"/api/bookmark/[a-z]+/\d+"]])
 
+(defn mcp-endpoint?
+  "Whether `uri` is one of the MCP server's endpoints, which check the access list and record their calls in the MCP
+  audit log themselves."
+  [uri]
+  (boolean (re-matches #"/api/(metabase-mcp|mcp)/*" (str uri))))
+
 (defn ai-client-write-allowed?
   "Whether an AI client authenticated with OAuth may make a `method` request to `uri`. Reads are always allowed: the
   data they return goes through the restrictions."

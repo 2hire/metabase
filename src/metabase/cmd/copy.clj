@@ -154,7 +154,9 @@
     ;; A run still in flight at dump time arrives marked running, and the transform timeout job reaps it.
     :model/TransformJobRun
     :model/TransformRun
-    :model/TransformRunCancelation]
+    :model/TransformRunCancelation
+    ;; 63+
+    :model/McpAuditLog]
    (when config/ee-available?
      [:model/MetabotGroupLimit
       :model/MetabotInstanceLimit

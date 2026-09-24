@@ -851,6 +851,8 @@ export interface EnterpriseSettings extends Settings {
   "mcp-sensitive-fields-auto-detect": boolean | null;
   "mcp-sensitive-field-ids": number[] | null;
   "mcp-non-sensitive-field-ids": number[] | null;
+  "mcp-audit-log-enabled?": boolean | null;
+  "mcp-audit-log-retention-days": number | null;
   "transforms-meter-locked": boolean | null;
   /**
    * @deprecated

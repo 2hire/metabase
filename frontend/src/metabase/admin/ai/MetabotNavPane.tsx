@@ -21,21 +21,22 @@ export function MetabotNavPane() {
           label={t`AI Settings`}
           path="/admin/metabot"
         />
+        {/* The MCP settings page and the audit log stay reachable with AI features turned off: the audit log
+            retention keeps applying and recorded entries stay readable. */}
         <AdminNavItem
-          disabled={!areAiFeaturesEnabled}
           icon="mcp"
           label={t`MCP`}
           folderPattern="/admin/metabot/mcp"
         >
-          <AdminNavItem
-            disabled={!areAiFeaturesEnabled}
-            label={t`Settings`}
-            path="/admin/metabot/mcp"
-          />
+          <AdminNavItem label={t`Settings`} path="/admin/metabot/mcp" />
           <AdminNavItem
             disabled={!areAiFeaturesEnabled}
             label={t`Authorizations`}
             path="/admin/metabot/mcp/authorizations"
+          />
+          <AdminNavItem
+            label={t`Audit log`}
+            path="/admin/metabot/mcp/audit-log"
           />
         </AdminNavItem>
         {AiControlsNavItems}

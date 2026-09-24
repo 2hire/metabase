@@ -450,6 +450,8 @@ export const createMockSettings = (
   "mcp-sensitive-fields-auto-detect": true,
   "mcp-sensitive-field-ids": [],
   "mcp-non-sensitive-field-ids": [],
+  "mcp-audit-log-enabled?": true,
+  "mcp-audit-log-retention-days": 90,
   "transforms-meter-locked": null,
   "mfa-enforcement": "off",
   ...opts,
